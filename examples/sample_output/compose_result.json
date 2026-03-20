@@ -1,0 +1,33 @@
+{
+  "product": "灵感咖啡机",
+  "platform": "douyin",
+  "platform_specs": {
+    "name": "抖音/快手",
+    "width": 1080,
+    "height": 1920,
+    "ratio": "9:16",
+    "max_duration": 60
+  },
+  "storyboard_file": "/private/tmp/ad-generator-mvp-test2/storyboard.json",
+  "assets_file": "/private/tmp/ad-generator-mvp-test2/assets/assets_manifest.json",
+  "brand_file": "/private/tmp/ad-generator-mvp-test2/brand/brand_manifest.json",
+  "publish_file": "/private/tmp/ad-generator-mvp-test2/publish.json",
+  "remotion_config": "/private/tmp/ad-generator-mvp-test2/remotion/ad_config.ts",
+  "videos": {
+    "ffmpeg": {
+      "vertical": {
+        "status": "ok",
+        "path": "/private/tmp/ad-generator-mvp-test2/videos/ad_vertical.mp4"
+      },
+      "square": {
+        "status": "ok",
+        "path": "/private/tmp/ad-generator-mvp-test2/videos/ad_square.mp4"
+      },
+      "horizontal": {
+        "status": "ok",
+        "path": "/private/tmp/ad-generator-mvp-test2/videos/ad_horizontal.mp4"
+      }
+    }
+  },
+  "output_dir": "/private/tmp/ad-generator-mvp-test2"
+}

@@ -1,0 +1,317 @@
+"""内容过滤和结构化 prompt 构建。
+
+移植自 xyz-video-creator 的 core_principles.py + content_filter.py，
+适配 ad-generator 的 CLI 工作流（无数据库，基于 JSON 文件）。
+
+核心功能：
+1. 从文本中移除服装/外貌描述（单一真相源原则）
+2. 构建结构化的图片 prompt 和视频 prompt
+"""
+
+from __future__ import annotations
+
+import re
+import logging
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+# ── 服装关键词（来自 oii/core_principles.py） ───────────────────
+
+CLOTHING_KEYWORDS_CHINESE = [
+    # 穿戴动词
+    "穿着", "穿了", "身穿", "身着", "着装", "衣着", "换上", "披着",
+    "戴着", "戴了", "佩戴", "系着",
+    # 上装
+    "衬衫", "衬衣", "T恤", "卫衣", "外套", "夹克", "西装", "西服",
+    "毛衣", "针织衫", "风衣", "大衣", "羽绒服", "棉服", "马甲",
+    "背心", "polo衫", "短袖", "长袖", "连帽衫",
+    # 下装
+    "裤子", "牛仔裤", "西裤", "休闲裤", "短裤", "裙子", "长裙", "短裙",
+    "半身裙", "连衣裙", "百褶裙",
+    # 鞋
+    "鞋子", "皮鞋", "运动鞋", "高跟鞋", "靴子", "凉鞋", "拖鞋", "球鞋",
+    # 配饰
+    "帽子", "眼镜", "墨镜", "太阳镜", "围巾", "领带", "领结", "手表",
+    "项链", "耳环", "手链", "戒指", "手套", "腰带", "皮带", "背包",
+    # 制服/特殊服装
+    "校服", "制服", "工装", "礼服", "婚纱", "睡衣",
+]
+
+CLOTHING_KEYWORDS_ENGLISH = [
+    "wearing", "dressed in", "clothed in",
+    "shirt", "t-shirt", "blouse", "sweater", "hoodie", "jacket", "coat",
+    "suit", "blazer", "vest", "dress", "skirt", "pants", "trousers",
+    "jeans", "shorts", "shoes", "boots", "sneakers", "heels",
+    "hat", "cap", "glasses", "sunglasses", "scarf", "tie", "watch",
+]
+
+CLOTHING_KEYWORDS = CLOTHING_KEYWORDS_CHINESE + CLOTHING_KEYWORDS_ENGLISH
+
+# ── 服装描述正则模式 ──────────────────────────────────────────
+
+CLOTHING_PATTERNS = [
+    # 中文：排除常见动词/介词边界词（在/地/得/把/被/让/向/从/对/给），防止吃掉后续动作
+    r'穿着[^，。、；\s在地得把被让向从对给]{1,12}[，、；\s]?',
+    r'身穿[^，。、；\s在地得把被让向从对给]{1,12}[，、；\s]?',
+    r'身着[^，。、；\s在地得把被让向从对给]{1,12}[，、；\s]?',
+    r'戴着[^，。、；\s在地得把被让向从对给]{1,10}[，、；\s]?',
+    r'佩戴[^，。、；\s在地得把被让向从对给]{1,10}[，、；\s]?',
+    r'系着[^，。、；\s在地得把被让向从对给]{1,8}[，、；\s]?',
+    r'披着[^，。、；\s在地得把被让向从对给]{1,10}[，、；\s]?',
+    r'换上了?[^，。、；\s在地得把被让向从对给]{1,10}[，、；\s]?',
+    # 英文：只匹配到逗号/句号/分号，不贪婪
+    r'wearing [^,.;\n]{1,20}[,;.]',
+    r'dressed in [^,.;\n]{1,20}[,;.]',
+    # "in a suit" 只匹配服装词本身，不吃后面内容
+    r'in a (?:shirt|t-shirt|blouse|sweater|hoodie|jacket|coat|suit|blazer|vest|dress|skirt|pants|trousers|jeans|shorts|uniform|gown|robe|outfit|costume)',
+]
+
+
+# ── ContentFilter ────────────────────────────────────────────
+
+class ContentFilter:
+    """内容过滤器 — 强制单一真相源原则。"""
+
+    @staticmethod
+    def remove_clothing_descriptions(text: str) -> str:
+        """从文本中移除服装/外貌描述。
+
+        例如：
+        输入："小明穿着绿色卫衣，好奇地环顾四周"
+        输出："小明好奇地环顾四周"
+        """
+        if not text:
+            return text
+
+        result = text
+        for pattern in CLOTHING_PATTERNS:
+            result = re.sub(pattern, '', result, flags=re.IGNORECASE)
+
+        # 清理残余标点和空格
+        result = re.sub(r'[，、]{2,}', '，', result)
+        result = re.sub(r'[,]{2,}', ',', result)
+        result = re.sub(r'\s+', ' ', result)
+        result = re.sub(r'^[，、,\s]+', '', result)
+        result = re.sub(r'[，、,\s]+$', '', result)
+        result = re.sub(r'，+', '，', result)
+        result = re.sub(r'。+', '。', result)
+
+        return result.strip()
+
+    @staticmethod
+    def contains_clothing_description(text: str) -> tuple[bool, list[str]]:
+        """检查文本是否包含服装描述。
+
+        对英文关键词使用单词边界匹配，避免 "shattered" 误匹配 "hat" 等误报。
+        中文关键词仍用子串匹配（中文无单词边界）。
+        """
+        if not text:
+            return False, []
+        found = []
+        text_lower = text.lower()
+        for keyword in CLOTHING_KEYWORDS:
+            kw_lower = keyword.lower()
+            if any('\u4e00' <= c <= '\u9fff' for c in keyword):
+                # 中文：子串匹配
+                if kw_lower in text_lower:
+                    found.append(keyword)
+            else:
+                # 英文：单词边界匹配
+                if re.search(r'\b' + re.escape(kw_lower) + r'\b', text_lower):
+                    found.append(keyword)
+        return len(found) > 0, found
+
+
+# ── VideoPromptBuilder（适配 ad-generator） ──────────────────
+
+class VideoPromptBuilder:
+    """结构化 prompt 构建器。
+
+    与 oii 的区别：
+    - 无对白/旁白逻辑（ad-generator 用 narration 字段由 Seedance 音画同轨处理）
+    - 角色信息从 storyboard.characters dict 读取
+    - 支持 consistency_anchors
+    """
+
+    @staticmethod
+    def build_image_prompt(
+        style_anchor: str,
+        character_appearances: list[tuple[str, str]],
+        scene_description: str,
+        camera_technical: str = "",
+        atmosphere: str = "",
+        physics: str = "",
+        consistency_anchors: dict[str, Any] | None = None,
+        action_hint: str = "",
+        # ── Scene 层级环境参数（同场景所有镜头共享）──
+        scene_environment: str = "",
+        scene_lighting: str = "",
+        scene_weather: str = "",
+        scene_props: list[str] | None = None,
+    ) -> str:
+        """构建图片生成 prompt（给 Gemini 用）。
+
+        Args:
+            style_anchor: 全局风格锚点
+            character_appearances: [(char_id, appearance_text), ...]
+            scene_description: 本镜头特有的动作/构图描述（已过滤外貌）
+            camera_technical: 焦距+光圈
+            atmosphere: 光影参数（向下兼容旧 storyboard，scene_lighting 优先）
+            physics: 物理细节（向下兼容旧 storyboard，scene_weather 优先）
+            consistency_anchors: 一致性锚点 dict
+            action_hint: 动作上下文（首帧需要为接下来的动作做好姿态准备）
+            scene_environment: 场景环境描述（来自 scene 层，同场景共享）
+            scene_lighting: 场景光线参数（来自 scene 层，同场景共享）
+            scene_weather: 天气/粒子效果（来自 scene 层，同场景共享）
+            scene_props: 场景道具列表（来自 scene 层，同场景共享）
+        """
+        clean_scene = ContentFilter.remove_clothing_descriptions(scene_description)
+
+        parts = []
+
+        # 风格锚点
+        if style_anchor:
+            parts.append(style_anchor)
+
+        # 角色外观设定（唯一真相来源）
+        if character_appearances:
+            parts.append("")
+            parts.append("⚠️ CHARACTER APPEARANCE — Single Source of Truth, MUST follow strictly:")
+            for char_id, appearance in character_appearances:
+                parts.append(f"  [{char_id}] {appearance}")
+
+        # 一致性锚点
+        if consistency_anchors:
+            chars_anchors = consistency_anchors.get("characters", [])
+            if chars_anchors:
+                anchor_parts = []
+                for ca in chars_anchors:
+                    cid = ca.get("id", "")
+                    must_show = ca.get("must_show", [])
+                    expr = ca.get("expression", "")
+                    if must_show:
+                        anchor_parts.append(f"  [{cid}] MUST SHOW: {', '.join(must_show)}. Expression: {expr}")
+                if anchor_parts:
+                    parts.append("")
+                    parts.append("⚠️ CONSISTENCY ANCHORS — these features MUST be visible:")
+                    parts.extend(anchor_parts)
+
+            # 环境锚点（shot 级，向下兼容）
+            env_anchors = consistency_anchors.get("environment", [])
+            if env_anchors:
+                parts.append("")
+                parts.append("⚠️ ENVIRONMENT ANCHORS — these elements MUST be present in the scene:")
+                parts.append(f"  {', '.join(env_anchors)}")
+
+        # ── 场景环境（scene 层级，同场景所有镜头共享，是视觉基底）──
+        env_parts = []
+        if scene_environment:
+            env_parts.append(f"  Environment: {scene_environment}")
+        # scene_lighting 优先，fallback 到旧的 atmosphere 参数
+        lighting_text = scene_lighting or atmosphere
+        if lighting_text:
+            env_parts.append(f"  Lighting: {lighting_text}")
+        # scene_weather 优先，fallback 到旧的 physics 参数
+        weather_text = scene_weather or physics
+        if weather_text:
+            env_parts.append(f"  Weather/Physics: {weather_text}")
+        if scene_props:
+            env_parts.append(f"  Props: {', '.join(scene_props)}")
+        if env_parts:
+            parts.append("")
+            parts.append("⚠️ SCENE ENVIRONMENT — shared by ALL shots in this scene, MUST be consistent:")
+            parts.extend(env_parts)
+
+        # 本镜头描述（已清洗，不含外貌；只写动作/构图/姿态）
+        parts.append("")
+        parts.append(f"SHOT: {clean_scene}")
+
+        # 动作上下文（帮助首帧图摆出合适的姿态）
+        if action_hint:
+            clean_hint = ContentFilter.remove_clothing_descriptions(action_hint)
+            parts.append(f"ACTION CONTEXT (the motion that will follow this frame): {clean_hint}")
+            parts.append("Pose the characters to naturally lead into this action.")
+
+        # 镜头技术参数
+        if camera_technical:
+            parts.append(f"TECHNICAL: {camera_technical}")
+
+        # 规则
+        parts.append("")
+        parts.append("RULES: Character appearance MUST match the settings above exactly. "
+                      "Do NOT add or change any clothing, accessories, or body features. "
+                      "Do NOT include any text labels or annotations in the image.")
+
+        return "\n".join(parts)
+
+    @staticmethod
+    def build_video_prompt(
+        character_appearances: list[tuple[str, str]],
+        action_description: str,
+        camera_movement: str = "",
+        consistency_anchors: dict[str, Any] | None = None,
+        narration: str = "",
+        scene_environment: str = "",
+    ) -> str:
+        """构建视频生成 prompt（给 Seedance 用）。
+
+        Args:
+            character_appearances: [(char_id, appearance_text), ...]
+            action_description: 动作描述（已过滤外貌）
+            camera_movement: 运镜方式
+            consistency_anchors: 一致性锚点
+            narration: 旁白文本（Seedance 音画同轨）
+            scene_environment: 场景环境简述（来自 scene 层）
+        """
+        clean_action = ContentFilter.remove_clothing_descriptions(action_description)
+
+        parts = []
+
+        # 角色外观设定
+        if character_appearances:
+            parts.append("【角色外观设定 - 唯一真相来源】")
+            for char_id, appearance in character_appearances:
+                # 截断过长描述
+                desc = appearance[:300] + "..." if len(appearance) > 300 else appearance
+                parts.append(f"【{char_id}】{desc}")
+            parts.append("")
+
+        # 一致性锚点
+        if consistency_anchors:
+            chars_anchors = consistency_anchors.get("characters", [])
+            anchor_lines = []
+            for ca in chars_anchors:
+                cid = ca.get("id", "")
+                must_show = ca.get("must_show", [])
+                expr = ca.get("expression", "")
+                if must_show:
+                    anchor_lines.append(f"[{cid}] 必须展示: {', '.join(must_show)}；表情: {expr}")
+            # 环境锚点
+            env_anchors = consistency_anchors.get("environment", [])
+            if env_anchors:
+                anchor_lines.append(f"环境要素: {', '.join(env_anchors)}")
+            if anchor_lines:
+                parts.append("【一致性要素】")
+                parts.extend(anchor_lines)
+                parts.append("")
+
+        # 动作（核心内容）
+        prompt_body = f"{camera_movement}, {clean_action}" if camera_movement and clean_action else (clean_action or camera_movement)
+        if scene_environment:
+            parts.append(f"【场景环境】{scene_environment}")
+        parts.append(f"【场景动作】{prompt_body}")
+
+        # 规则
+        parts.append("")
+        parts.append("【重要规则】")
+        parts.append("1. 角色外观必须与上述设定完全一致")
+        parts.append("2. 如果画面与角色设定冲突，以角色设定为准")
+
+        result = "\n".join(parts)
+
+        # 拼接旁白（Seedance 音画同轨）
+        if narration.strip():
+            result = f"{result}\n\n旁白：{narration}"
+
+        return result

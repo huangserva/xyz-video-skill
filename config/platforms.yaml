@@ -1,0 +1,19 @@
+platforms:
+  douyin:
+    name: 抖音/快手
+    width: 1080
+    height: 1920
+    ratio: "9:16"
+    max_duration: 60
+  wechat:
+    name: 朋友圈/微博
+    width: 1080
+    height: 1080
+    ratio: "1:1"
+    max_duration: 30
+  youtube:
+    name: YouTube/B站
+    width: 1920
+    height: 1080
+    ratio: "16:9"
+    max_duration: 120

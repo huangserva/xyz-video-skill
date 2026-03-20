@@ -1,0 +1,102 @@
+{
+  "version": "30s",
+  "total_duration": 30,
+  "bgm_style": "温暖钢琴 + 轻弦乐，逐步推进",
+  "shots": [
+    {
+      "id": 1,
+      "duration": 4,
+      "shot_type": "特写",
+      "visual_description": "灵感咖啡机，把日常变成被看见的幸福 - 痛点展示镜头 1",
+      "image_prompt": "commercial ad shot 1, 灵感咖啡机, cinematic lighting, high detail, clean composition, Chinese market style",
+      "tts_text": "这是第1个镜头，聚焦 灵感咖啡机 在真实场景中的关键表现。",
+      "subtitle": "第1镜：突出灵感咖啡机的痛点场景",
+      "transition": "cut"
+    },
+    {
+      "id": 2,
+      "duration": 4,
+      "shot_type": "中景",
+      "visual_description": "灵感咖啡机，把日常变成被看见的幸福 - 痛点展示镜头 2",
+      "image_prompt": "commercial ad shot 2, 灵感咖啡机, cinematic lighting, high detail, clean composition, Chinese market style",
+      "tts_text": "这是第2个镜头，聚焦 灵感咖啡机 在真实场景中的关键表现。",
+      "subtitle": "第2镜：突出灵感咖啡机的痛点场景",
+      "transition": "fade"
+    },
+    {
+      "id": 3,
+      "duration": 4,
+      "shot_type": "跟拍",
+      "visual_description": "灵感咖啡机，把日常变成被看见的幸福 - 价值展示镜头 3",
+      "image_prompt": "commercial ad shot 3, 灵感咖啡机, cinematic lighting, high detail, clean composition, Chinese market style",
+      "tts_text": "这是第3个镜头，聚焦 灵感咖啡机 在真实场景中的关键表现。",
+      "subtitle": "第3镜：突出灵感咖啡机的价值场景",
+      "transition": "whip"
+    },
+    {
+      "id": 4,
+      "duration": 4,
+      "shot_type": "远景",
+      "visual_description": "灵感咖啡机，把日常变成被看见的幸福 - 价值展示镜头 4",
+      "image_prompt": "commercial ad shot 4, 灵感咖啡机, cinematic lighting, high detail, clean composition, Chinese market style",
+      "tts_text": "这是第4个镜头，聚焦 灵感咖啡机 在真实场景中的关键表现。",
+      "subtitle": "第4镜：突出灵感咖啡机的价值场景",
+      "transition": "zoom"
+    },
+    {
+      "id": 5,
+      "duration": 4,
+      "shot_type": "转场镜头",
+      "visual_description": "灵感咖啡机，把日常变成被看见的幸福 - 价值展示镜头 5",
+      "image_prompt": "commercial ad shot 5, 灵感咖啡机, cinematic lighting, high detail, clean composition, Chinese market style",
+      "tts_text": "这是第5个镜头，聚焦 灵感咖啡机 在真实场景中的关键表现。",
+      "subtitle": "第5镜：突出灵感咖啡机的价值场景",
+      "transition": "cut"
+    },
+    {
+      "id": 6,
+      "duration": 4,
+      "shot_type": "特写",
+      "visual_description": "灵感咖啡机，把日常变成被看见的幸福 - 价值展示镜头 6",
+      "image_prompt": "commercial ad shot 6, 灵感咖啡机, cinematic lighting, high detail, clean composition, Chinese market style",
+      "tts_text": "这是第6个镜头，聚焦 灵感咖啡机 在真实场景中的关键表现。",
+      "subtitle": "第6镜：突出灵感咖啡机的价值场景",
+      "transition": "fade"
+    },
+    {
+      "id": 7,
+      "duration": 3,
+      "shot_type": "中景",
+      "visual_description": "灵感咖啡机，把日常变成被看见的幸福 - 价值展示镜头 7",
+      "image_prompt": "commercial ad shot 7, 灵感咖啡机, cinematic lighting, high detail, clean composition, Chinese market style",
+      "tts_text": "这是第7个镜头，聚焦 灵感咖啡机 在真实场景中的关键表现。",
+      "subtitle": "第7镜：突出灵感咖啡机的价值场景",
+      "transition": "whip"
+    },
+    {
+      "id": 8,
+      "duration": 3,
+      "shot_type": "跟拍",
+      "visual_description": "灵感咖啡机，把日常变成被看见的幸福 - 价值展示镜头 8",
+      "image_prompt": "commercial ad shot 8, 灵感咖啡机, cinematic lighting, high detail, clean composition, Chinese market style",
+      "tts_text": "现在就试试 灵感咖啡机，把改变从今天开始。",
+      "subtitle": "立即体验 灵感咖啡机，现在行动",
+      "transition": "zoom"
+    }
+  ],
+  "creative": {
+    "type": "emotional",
+    "title": "灵感咖啡机，把日常变成被看见的幸福",
+    "storyline": "从目标用户的真实痛点切入，展示使用 灵感咖啡机 前后生活变化，情绪线从焦虑到轻松，结尾引导立即体验。 卖点重点：3秒出咖啡、智能温控、低噪音。 投放平台重点适配：douyin。",
+    "estimated_duration": 30,
+    "scenes_preview": [
+      "用户在高压场景中疲惫应对",
+      "灵感咖啡机 出场并解决关键问题",
+      "用户在生活场景中自信表达并号召行动"
+    ],
+    "tone": "温暖、真实、轻激励",
+    "target_audience_fit": "都市白领 对情绪价值敏感，情感叙事更容易促发停留和转化。"
+  },
+  "product": "灵感咖啡机",
+  "platform": "douyin"
+}

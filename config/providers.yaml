@@ -1,0 +1,57 @@
+# API Provider 配置
+providers:
+  byteplus:
+    api_base: "https://ark.ap-southeast.bytepluses.com/api/v3"
+  volcengine:
+    api_base: "https://ark.cn-beijing.volces.com/api/v3"
+  apimart:
+    api_base: "https://api.apimart.ai/v1"
+  fal:
+    api_base: "https://queue.fal.run"
+  openrouter:
+    api_base: "https://openrouter.ai/api/v1"
+
+# 各功能模块的模型和参数配置
+models:
+  video:
+    provider: byteplus
+    model: "seedance-1-5-pro-251215"
+    ratio: "16:9"
+    resolution: "720p"
+    generate_audio: true
+    poll_interval: 5
+    poll_max_attempts: 60
+    submit_timeout: 30
+    poll_timeout: 15
+
+  image:
+    fallback_chain: [volcengine, apimart, fal]
+    volcengine:
+      model: "doubao-seedream-4-0-250828"
+      size: "2K"
+      response_format: "url"
+      watermark: true
+      timeout: 120
+    apimart:
+      model: "gemini-3.1-flash-image-preview"
+      timeout: 180
+      poll_interval: 5
+      poll_max_attempts: 30
+    fal:
+      num_inference_steps: 4
+      num_images: 1
+      timeout: 180
+      poll_interval: 1
+      poll_max_attempts: 90
+
+  bgm:
+    provider: fal
+    endpoint: "/fal-ai/minimax-music/v2"
+    timeout: 240
+    poll_interval: 1
+    poll_max_attempts: 120
+
+  llm:
+    provider: apimart
+    model: "gemini-2.5-flash"
+    timeout: 60

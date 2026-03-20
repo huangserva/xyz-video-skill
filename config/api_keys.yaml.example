@@ -1,0 +1,158 @@
+ApiCore:
+  api_base: https://api.apicore.ai/v1
+  api_key: sk-YOUR_KEY_HERE
+  api_type: apicore
+ApiMart:
+  api_base: https://api.apimart.ai/v1
+  api_key: sk-YOUR_KEY_HERE
+  api_type: apimart
+Kling:
+  access_key: YOUR_ACCESS_KEY
+  api_base: https://api-beijing.klingai.com
+  api_type: kling
+  secret_key: YOUR_SECRET_KEY
+ZenMux:
+  api_base: https://zenmux.ai/api/vertex-ai
+  api_key: sk-YOUR_KEY_HERE
+  api_type: google_genai
+fal:
+  api_key: YOUR_FAL_KEY_HERE
+  api_base: https://queue.fal.run
+  api_type: fal
+timeai:
+  api_key: sk-YOUR_KEY_HERE
+  api_base: https://timeai.chat/v1
+  api_type: timeai
+byteplus:
+  api_key: YOUR_BYTEPLUS_KEY_HERE
+  api_base: https://ark.ap-southeast.bytepluses.com/api/v3
+  api_type: byteplus
+defaults:
+  image_model: doubao-4
+  planner_model: gemini-2.5-flash
+  retry_delay: 2
+  retry_times: 3
+  text_model: gemini-2.5-flash
+  timeout: 300
+image_models:
+  doubao-4:
+    default_size: 2K
+    description: 字节跳动豆包 4 图像生成模型
+    display_name: 豆包 4
+    model_name: doubao-seedream-4-0-250828
+    provider: volcengine
+    watermark: true
+  gemini-image-multimodal:
+    default_size: '16:9'
+    description: ApiCore Gemini 图像生成 - 支持多模态输入(参考图)
+    display_name: Gemini Image (支持参考图)
+    model_name: gemini-2.5-flash-image
+    provider: ApiCore
+  jimeng-4:
+    default_size: 1024x1024
+    description: 即梦 4.0 图像生成模型
+    display_name: 即梦 4.0
+    model_name: jimeng-4.0
+    provider: volcengine
+  nana-banana:
+    default_size: 1024x1024
+    description: Google Gemini 2.5 Flash 图像生成模型
+    display_name: Nano Banana (Gemini 2.5 Flash Image)
+    model_name: gemini-2.5-flash-image
+    provider: ApiMart
+  nano-banana-pro:
+    default_size: '1:1'
+    description: ApiMart Gemini 3 Pro Image Preview - 高质量图像生成
+    display_name: Nano Banana Pro
+    model_name: gemini-3-pro-image-preview
+    provider: ApiMart
+  nano-banana-v2:
+    aspect_ratio: '1:1'
+    description: ApiMart Gemini 3 Pro Image Preview - 高质量图像生成
+    display_name: Nano Banana V2
+    model_name: gemini-3-pro-image-preview
+    provider: ApiMart
+  fal-flux-dev:
+    default_size: 1024x1024
+    description: fal.ai FLUX.1 Dev - 高质量图片生成
+    display_name: FLUX.1 Dev (fal.ai)
+    model_name: fal-ai/flux/dev
+    provider: fal
+  fal-flux-schnell:
+    default_size: 1024x1024
+    description: fal.ai FLUX.1 Schnell - 快速图片生成
+    display_name: FLUX.1 Schnell (fal.ai)
+    model_name: fal-ai/flux/schnell
+    provider: fal
+ip_adapter:
+  comfyui:
+    api_base: http://219.147.109.250:8188
+    workflow_id: ip_adapter_workflow
+  default_provider: fal
+  fal:
+    api_key: YOUR_FAL_KEY_HERE
+    model: fal-ai/ip-adapter-face-id
+  replicate:
+    api_key: ''
+    model: zsxkib/instant-id:main
+jimeng:
+  access_key: your-access-key-here
+  api_type: jimeng
+  base_url: https://visual.volcengineapi.com
+  req_key: your-req-key-here
+  secret_key: your-secret-key-here
+openrouter:
+  api_base: https://openrouter.ai/api/v1
+  api_key: sk-YOUR_KEY_HERE
+  api_type: openai_compatible
+text_models:
+  gemini-2.5-flash:
+    description: Gemini 2.5 Flash - 超快速度，低成本，支持Vision
+    display_name: Gemini 2.5 Flash
+    max_tokens: 8192
+    model_name: google/gemini-2.5-flash
+    provider: openrouter
+    temperature: 0.7
+  gemini-2.5-pro:
+    description: Google Gemini 2.5 Pro 稳定版
+    display_name: Gemini 2.5 Pro
+    max_tokens: 8192
+    model_name: gemini-2.5-pro
+    provider: ApiMart
+    temperature: 0.7
+  gemini-3-pro:
+    description: Google 最新的 Gemini 3 Pro 预览版
+    display_name: Gemini 3 Pro Preview
+    max_tokens: 8192
+    model_name: gemini-3-pro-preview
+    provider: ApiMart
+    temperature: 0.7
+volcengine:
+  api_key: YOUR_VOLCENGINE_KEY_HERE
+  api_type: volcengine
+  base_url: https://ark.cn-beijing.volces.com/api/v3
+
+# 视频模型配置
+video_models:
+  seedance-1.5-pro:
+    display_name: SeeDance 1.5 Pro
+    description: BytePlus SeeDance 1.5 Pro - 首尾帧+音画同频
+    model_name: seedance-1-5-pro-251215
+    provider: byteplus
+    default_duration: 5
+    default_aspect_ratio: "16:9"
+    default_resolution: "720p"
+    supports_audio: true
+    supports_last_frame: true
+  sora-2:
+    display_name: Sora 2
+    description: OpenAI Sora 2 视频生成
+    model_name: sora-2
+    provider: timeai
+    default_duration: 5
+    default_aspect_ratio: "16:9"
+
+# IndexTTS2 语音合成服务
+indextts2:
+  server_url: http://219.147.109.250:7860
+  default_voice_dir: data/oii/voices
