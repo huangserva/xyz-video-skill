@@ -152,7 +152,3 @@ video_models:
     default_duration: 5
     default_aspect_ratio: "16:9"
 
-# IndexTTS2 语音合成服务
-indextts2:
-  server_url: http://219.147.109.250:7860
-  default_voice_dir: data/oii/voices
