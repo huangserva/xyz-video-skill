@@ -1,148 +1,226 @@
-# Ad Generator Skill - Development Task
+# Ad Generator - 当前仓库说明
 
-## 目标
-创建 `ad-generator` Skill，实现广告片生成线的 MVP Day 1-3。
+## 当前定位
 
-## 文件结构
-```
+这个仓库当前更准确的定位是一个**由宿主 LLM 驱动的视频生成 Skill**，而不是一个已经完整收口的一键式广告片 CLI。
+
+- 宿主 LLM 负责故事创作、剧本框架、角色设计、分镜脚本等思考任务
+- Python 脚本负责角色参考图、镜头素材、品牌化处理和 FFmpeg 合成
+- 现有代码已经覆盖执行层 MVP，但“创意策划 → 分镜脚本 → 投放文案”仍主要靠 `SKILL.md` 约束宿主 LLM 产出 JSON
+
+如果把当前仓库理解成“视频生成线 / 广告视频执行管线”，会比“广告片一键生成器”更准确。
+
+## 实际文件结构
+
+```text
 skills/ad-generator/
-├── SKILL.md                    # Skill 入口定义
+├── SKILL.md                     # 主入口说明，定义宿主 LLM 的工作流
+├── TASK.md                      # 当前仓库说明（本文件）
 ├── scripts/
-│   ├── ad_creative.py          # 创意策划模块
-│   ├── ad_storyboard.py        # 分镜生成模块
-│   ├── ad_assets.py            # 素材生成模块（图/音/BGM）
-│   ├── ad_brand.py             # 品牌适配模块（Logo/配色叠加）
-│   ├── ad_compose.py           # 合成编排模块
-│   └── ad_publish.py           # 投放文案生成模块
-├── templates/
-│   ├── creative_prompt.md      # 创意策划 prompt 模板
-│   ├── storyboard_prompt.md    # 分镜生成 prompt 模板
-│   └── publish_prompt.md       # 投放文案 prompt 模板
+│   ├── ad_assets.py             # 角色参考图 / 镜头素材 / BGM 生成
+│   ├── ad_brand.py              # 品牌适配（Logo、标题条、字幕条、水印、产品贴图）
+│   ├── ad_compose.py            # FFmpeg 合成（按平台尺寸输出）
+│   ├── content_filter.py        # prompt 过滤与构造辅助
+│   ├── image_composer.py        # 图像生成辅助逻辑
+│   ├── models.py                # 数据模型
+│   └── utils.py                 # 通用工具
+├── templates/                   # 提示词资产，包含多个迭代阶段留下的模板
 ├── config/
-│   └── platforms.yaml          # 平台尺寸/规格配置
+│   ├── platforms.yaml           # 平台尺寸配置
+│   ├── providers.yaml           # 模型和 provider 配置
+│   └── api_keys.yaml.example    # API 配置示例
 └── examples/
-    └── sample_output/          # 示例产出
+    └── sample_output/           # 历史样例输出（包含部分旧版广告链路产物）
 ```
 
-## Day 1: 创意+脚本引擎
+## 当前真实工作流
 
-### ad_creative.py
-功能：
-- 输入：产品名称、核心卖点、目标人群、投放平台
-- 输出：3-5 套创意方案（情感向/功能向/悬念向/口播种草向）
-- 每套包含：type, title, storyline, estimated_duration, scenes_preview, tone, target_audience_fit
-- 输出结构化 JSON
+### 1. 宿主 LLM 产出结构化 JSON
 
-### ad_storyboard.py
-功能：
-- 输入：选定的创意方案
-- 输出：完整分镜脚本，含逐镜头分镜
-- 每个分镜：id, duration, shot_type, visual_description, image_prompt, tts_text, subtitle, transition
-- 支持 15s/30s/60s 三个版本
-- BGM 风格建议
+按 [`SKILL.md`](./SKILL.md) 中定义的流程，由宿主 LLM 逐步产出：
 
-### templates/creative_prompt.md
-广告创意策划的 prompt 模板，引导 LLM 按 4 种类型（emotional/functional/suspense/review）输出
+1. `story.json`
+2. `framework.json`
+3. `storyboard.json`
 
-### templates/storyboard_prompt.md
-分镜生成的 prompt 模板，按镜头逐帧输出
+这一步不是由当前仓库内某个 `ad_creative.py` 或 `ad_storyboard.py` 自动完成，而是由 Skill 提示词和宿主 LLM 的推理完成。
 
-## Day 2: 素材生成 pipeline
+### 2. 生成角色参考图
 
-### ad_assets.py
-功能：
-- 调用 AI 图像生成 API（豆包4 doubao-seedream-4-0 via ark）
-- 调用 TTS（IndexTTS2 或 Edge TTS）
-- 调用 BGM 生成（MiniMax via fal.ai）
-- 并行化生成
-- fallback 机制：豆包 → ApiMart → Flux
-
-参考代码（可从这里抽取逻辑）：
-- ~/development/xyz-video-creator/backend/oii/image_composer.py
-- ~/development/xyz-video-creator/backend/oii/tts_service.py
-- ~/development/xyz-video-creator/backend/oii/bgm_service.py
-- ~/development/xyz-video-creator/backend/universal_ai_client.py
-- ~/development/xyz-video-creator/config.yaml （API 配置）
-
-### ad_brand.py
-功能：
-- Logo 叠加（PIL/Pillow，右下角 + 片头/片尾）
-- 品牌色应用到字幕和标题
-- 产品图融入指定分镜
-- 水印保护
-
-## Day 3: 合成+输出
-
-### ad_compose.py
-功能：
-- 编排整个流程：创意→脚本→素材→合成
-- 生成 Remotion AdConfig（从分镜 JSON → TypeScript 配置）
-- 调用 Remotion 渲染或 FFmpeg 合成
-- 多尺寸输出（竖屏 1080x1920 / 方屏 1080x1080 / 横屏 1920x1080）
-
-参考代码：
-- ~/development/xyz-video-creator/backend/oii/video_composer.py
-- FFmpeg 合成逻辑
-
-### ad_publish.py
-功能：
-- 根据脚本+平台特性生成投放文案
-- 生成标签建议
-- A/B 测试方案
-
-### config/platforms.yaml
-```yaml
-platforms:
-  douyin:
-    name: 抖音/快手
-    width: 1080
-    height: 1920
-    ratio: "9:16"
-    max_duration: 60
-  wechat:
-    name: 朋友圈/微博
-    width: 1080
-    height: 1080
-    ratio: "1:1"
-    max_duration: 30
-  youtube:
-    name: YouTube/B站
-    width: 1920
-    height: 1080
-    ratio: "16:9"
-    max_duration: 120
-```
-
-### SKILL.md
-```markdown
----
-name: ad-generator
-description: "广告片生成线 - 对话驱动的端到端广告片生成。输入产品信息，自动完成创意策划→脚本分镜→素材生成→多版本成片。"
----
-
-# 广告片生成线 Ad Generator
-
-## 触发条件
-用户提到"生成广告"、"广告片"、"商业视频"、"产品广告"等关键词
-
-## 流程
-1. 收集产品信息（名称、卖点、人群、平台）
-2. 生成 3-5 套创意方案
-3. 用户选定方向后生成分镜脚本（15s/30s/60s）
-4. 并行生成素材（AI图、TTS、BGM）+ 品牌适配
-5. 多版本合成（竖屏/方屏/横屏）
-6. 生成投放文案和 A/B 建议
-
-## 使用方式
 ```bash
-python3 scripts/ad_compose.py --product "产品名" --selling_points "卖点" --audience "目标人群" --platform "douyin"
-```
+/opt/homebrew/bin/python3.14 scripts/ad_assets.py \
+  --mode character_refs \
+  --framework /path/to/framework.json \
+  --output_dir /path/to/output/character_refs
 ```
 
-## 重要说明
-1. 所有 Python 脚本使用 Python 3.14（/opt/homebrew/bin/python3.14）
-2. 需要的依赖：Pillow, aiohttp, pyyaml, edge-tts
-3. API Key 从环境变量或 xyz-video-creator/config.yaml 读取
-4. 每个模块可独立运行和测试
-5. 输出目录：~/ad-output/{timestamp}/
-6. 注释和 docstring 用中文
+用途：
+
+- 读取 `framework.json` 中的 `suggested_characters`
+- 为每个角色生成参考图
+- 输出 `character_refs.json` 和角色图片
+
+### 3. 生成镜头素材
+
+```bash
+/opt/homebrew/bin/python3.14 scripts/ad_assets.py \
+  --mode assets \
+  --storyboard /path/to/storyboard.json \
+  --output_dir /path/to/output/assets
+```
+
+用途：
+
+- 读取 `storyboard.json`
+- 生成每个 shot 的图片 / 视频片段 / BGM
+- 输出 `assets.json`
+
+当前实现支持：
+
+- `scenes > shots` 嵌套结构
+- 向下兼容 legacy 的 flat `shots`
+- `chain_from_previous` 尾帧衔接
+- `end_frame_description` 校验
+- 视频质量检测、自动重试和裁剪
+- 图像生成 fallback provider 链
+
+### 4. 可选品牌化处理
+
+```bash
+/opt/homebrew/bin/python3.14 scripts/ad_brand.py \
+  --assets_manifest /path/to/output/assets/assets.json \
+  --storyboard_file /path/to/storyboard.json \
+  --logo_path /path/to/logo.png \
+  --brand_color '#FF6A00' \
+  --output_dir /path/to/output/brand
+```
+
+用途：
+
+- 将图片素材做品牌化二次处理
+- 叠加标题条、字幕条、Logo、水印
+- 可将产品图插入指定镜头
+- 输出 `brand_manifest.json`
+
+说明：
+
+- `ad_compose.py` 的 `--assets` 参数只要求传入 manifest JSON
+- 因此如果想用品牌化后的图片继续合成，可以直接传 `brand_manifest.json`
+
+### 5. 合成成片
+
+```bash
+/opt/homebrew/bin/python3.14 scripts/ad_compose.py \
+  --storyboard /path/to/storyboard.json \
+  --assets /path/to/output/assets/assets.json \
+  --platform douyin wechat youtube \
+  --output_dir /path/to/output/videos
+```
+
+如果要使用品牌化后的图片：
+
+```bash
+/opt/homebrew/bin/python3.14 scripts/ad_compose.py \
+  --storyboard /path/to/storyboard.json \
+  --assets /path/to/output/brand/brand_manifest.json \
+  --platform douyin wechat youtube \
+  --output_dir /path/to/output/videos
+```
+
+当前实现支持：
+
+- 按 [`config/platforms.yaml`](./config/platforms.yaml) 中的平台尺寸输出
+- 优先使用生成的视频片段，失败时回退到静态图片
+- 基于 `transition_in` 的转场拼接
+- BGM 混合
+- FFmpeg 合成
+
+## 当前已实现的脚本职责
+
+### `scripts/ad_assets.py`
+
+当前是仓库里最核心的执行脚本，承担两类任务：
+
+1. `character_refs` 模式：从 `framework.json` 生成角色参考图
+2. `assets` 模式：从 `storyboard.json` 生成图片、视频和 BGM
+
+它不是“只生成广告素材”的薄封装，而是已经包含较完整的素材执行逻辑。
+
+### `scripts/ad_brand.py`
+
+负责视觉品牌化：
+
+- 标题条和字幕条
+- 品牌主色
+- Logo 贴角
+- 水印保护
+- 产品图贴入指定镜头
+- 片头 / 片尾静态图
+
+### `scripts/ad_compose.py`
+
+当前职责是**纯合成**，不是全流程 orchestrator。
+
+它当前做的事情：
+
+- 读取 `storyboard.json`
+- 读取素材 manifest
+- 生成每个平台尺寸的视频文件
+- 输出 `result.json`
+
+它当前**不负责**：
+
+- 根据产品信息自动生成创意
+- 自动写 `storyboard.json`
+- 自动生成 `publish.json`
+- 自动生成 Remotion `ad_config.ts`
+
+## 当前未实现或未收口的部分
+
+以下内容在旧设计中出现过，但与当前代码不一致：
+
+- `scripts/ad_creative.py`：不存在
+- `scripts/ad_storyboard.py`：不存在
+- `scripts/ad_publish.py`：不存在
+- `python3 scripts/ad_compose.py --product ... --selling_points ...` 这种一键入口：当前不存在
+- Remotion `ad_config.ts` 自动导出：当前代码未实现
+- `publish.json` 自动生成：当前代码未实现
+
+## 关于 `templates/`
+
+`templates/` 目录里保留了多套 prompt 资产，来源于不同阶段的设计迭代。
+
+当前状态更接近：
+
+- 一部分模板是广告导向的旧 prompt
+- 一部分模板是结构化故事/分镜生成草稿
+- 它们不是当前 Python 脚本的严格运行时依赖
+- 当前主入口仍然是 [`SKILL.md`](./SKILL.md) 中对宿主 LLM 的流程约束
+
+如果后续继续整理仓库，`templates/` 建议单独做一次归档或命名梳理。
+
+## 运行环境
+
+- Python：`/opt/homebrew/bin/python3.14`
+- 主要依赖：`Pillow`、`aiohttp`、`pyyaml`、`edge-tts`
+- 输出目录：默认 `~/video-output/{timestamp}/`
+- API Key：环境变量或 `config/api_keys.yaml`
+
+## 样例输出目录说明
+
+[`examples/sample_output/`](./examples/sample_output/) 里保留的是一套**历史广告样例产物**，其中部分文件来自旧版设计口径。
+
+这意味着：
+
+- 目录中的文件可以作为结构参考
+- 但不能把该目录中的 README 命令直接当作当前 CLI 说明
+- `publish.json`、`ad_config.ts`、`compose_result.json` 中的部分字段代表旧版广告链路设想，不是当前脚本的直接输出合同
+
+## 建议的后续整理方向
+
+如果继续维护这个仓库，优先级建议如下：
+
+1. 保持 `SKILL.md` 作为唯一真实工作流说明
+2. 将旧版广告文档和当前视频执行流明确分层
+3. 决定是否真的要补齐一键式广告入口
+4. 对 `templates/` 和 `examples/` 做一次“当前可用 / 历史遗留”标注
