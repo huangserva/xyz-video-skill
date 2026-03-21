@@ -14,3 +14,6 @@ output/
 *.mp4
 *.wav
 *.mp3
+
+# Local planning docs
+IMPLEMENTATION_PLAN.md
