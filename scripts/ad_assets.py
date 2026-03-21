@@ -420,6 +420,127 @@ class AssetGenerator:
                 if flicker_start_time < keep_time:
                     keep_time = flicker_start_time
 
+            # ── 局部突变检测：单帧或少数帧的面部变形/跳变 ──
+            # 用滑动窗口计算局部均值，如果某帧 MSE 超过局部均值的 spike_factor 倍
+            # 且绝对值超过 spike_abs_min，标记为 spike
+            spike_factor = 2.5
+            spike_abs_min = 150
+            spike_window = 12  # 前后各 12 帧（约 0.5s）计算局部基准
+            spike_count = 0
+            first_spike_time = None
+
+            for j in range(len(diffs)):
+                # 局部窗口（排除自身）
+                w_start = max(0, j - spike_window)
+                w_end = min(len(diffs), j + spike_window + 1)
+                neighbors = [diffs[k] for k in range(w_start, w_end) if k != j]
+                if not neighbors:
+                    continue
+                local_mean = sum(neighbors) / len(neighbors)
+
+                if diffs[j] > max(spike_abs_min, local_mean * spike_factor):
+                    spike_count += 1
+                    t = (j + 1) / fps
+                    if first_spike_time is None:
+                        first_spike_time = t
+                    logger.debug(
+                        f"质量检测: 局部突变 @{t:.2f}s "
+                        f"(MSE={diffs[j]:.0f}, 局部均值={local_mean:.0f}, "
+                        f"倍率={diffs[j]/local_mean:.1f}x)"
+                    )
+
+            if spike_count >= 2:
+                # 多个突变点 → 标记需要裁剪或重新生成
+                spike_trim = first_spike_time - 0.1  # 在第一个突变前 0.1s 裁
+                if spike_trim > 0 and spike_trim < keep_time:
+                    keep_time = spike_trim
+                    logger.info(
+                        f"质量检测: 检测到 {spike_count} 个局部突变，"
+                        f"首个 @{first_spike_time:.1f}s，裁剪到 {keep_time:.1f}s"
+                    )
+
+            # ── 人脸变形检测：DNN 置信度骤降 ──
+            # 用 OpenCV DNN SSD 人脸检测器，追踪人脸置信度变化
+            # 如果曾经稳定检测到人脸，后来置信度骤降 → 脸部变形
+            try:
+                import cv2
+                model_dir = Path(__file__).parent.parent / "models"
+                proto = model_dir / "deploy.prototxt"
+                weights = model_dir / "res10_300x300_ssd_iter_140000.caffemodel"
+                if proto.exists() and weights.exists():
+                    net = cv2.dnn.readNetFromCaffe(str(proto), str(weights))
+                    face_confs = []  # (time, confidence)
+                    sample_interval = 3  # 每 3 帧检测一次
+                    with tempfile.TemporaryDirectory() as face_td:
+                        subprocess.run(
+                            ["ffmpeg", "-i", str(video_path), "-vf", "scale=480:-1",
+                             f"{face_td}/f%05d.png", "-loglevel", "error"],
+                            check=True,
+                        )
+                        face_frames = sorted(Path(face_td).glob("f*.png"))
+                        for fi, ff in enumerate(face_frames):
+                            if fi % sample_interval != 0:
+                                continue
+                            img = cv2.imread(str(ff))
+                            if img is None:
+                                continue
+                            blob = cv2.dnn.blobFromImage(
+                                img, 1.0, (300, 300), (104.0, 177.0, 123.0)
+                            )
+                            net.setInput(blob)
+                            detections = net.forward()
+                            best_conf = 0.0
+                            for di in range(detections.shape[2]):
+                                c = float(detections[0, 0, di, 2])
+                                if c > best_conf:
+                                    best_conf = c
+                            face_confs.append((fi / fps, best_conf))
+
+                    # 分析置信度变化：找"曾有脸→脸消失"的骤降点
+                    if face_confs:
+                        # 用滑动窗口找到最后一段"稳定有脸"区间
+                        high_threshold = 0.5
+                        low_threshold = 0.3
+                        window = 3  # 连续 3 个采样点有脸 = 稳定有脸
+
+                        # 找最后一个 conf >= high 的连续段
+                        last_good_face_time = None
+                        consecutive_high = 0
+                        had_stable_face = False
+                        for t, c in face_confs:
+                            if c >= high_threshold:
+                                consecutive_high += 1
+                                if consecutive_high >= window:
+                                    had_stable_face = True
+                                last_good_face_time = t
+                            else:
+                                consecutive_high = 0
+
+                        if had_stable_face and last_good_face_time is not None:
+                            # 检查 last_good_face_time 之后是否还有高置信度人脸
+                            # 如果后面脸又回来了，说明只是转身，不是变形
+                            face_returned = False
+                            for t, c in face_confs:
+                                if t > last_good_face_time + 2.0 and c >= low_threshold:
+                                    face_returned = True
+                                    break
+
+                            remaining = duration - last_good_face_time
+                            if remaining > 1.5 and not face_returned:
+                                # 脸消失后再也没回来 → 脸部变形
+                                face_trim = last_good_face_time + 0.3
+                                if face_trim < keep_time:
+                                    keep_time = face_trim
+                                    logger.info(
+                                        f"质量检测: 人脸置信度骤降，"
+                                        f"最后稳定 @{last_good_face_time:.1f}s，"
+                                        f"裁剪到 {keep_time:.1f}s"
+                                    )
+            except ImportError:
+                pass  # cv2 不可用，跳过人脸检测
+            except Exception as e:
+                logger.debug(f"质量检测: 人脸检测跳过 ({e})")
+
             if keep_time >= duration - 0.1:
                 # 整个视频都稳定，不需要裁剪
                 logger.debug(f"质量检测: 视频质量正常，无需处理")
