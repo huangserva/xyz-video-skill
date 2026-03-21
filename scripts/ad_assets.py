@@ -1124,7 +1124,7 @@ class AssetGenerator:
 
         if self.use_api:
             dispatch = {
-                "volcengine": lambda p, o: self._image_volcengine(p, o),
+                "volcengine": lambda p, o: self._image_volcengine(p, o, characters_in_shot=characters_in_shot or [], scene_image=scene_image),
                 "apimart": lambda p, o: self._image_apimart(p, o, characters_in_shot=characters_in_shot or [], scene_image=scene_image),
                 "fal": lambda p, o: self._image_flux(p, o),
             }
@@ -1144,26 +1144,49 @@ class AssetGenerator:
         self._placeholder_image(out, shot_id, prompt)
         return out, "placeholder"
 
-    async def _image_volcengine(self, prompt: str, output: Path) -> bool:
-        """Volcengine Seedream 图像生成。"""
+    async def _image_volcengine(self, prompt: str, output: Path, characters_in_shot: list[str] | None = None, scene_image: Path | None = None) -> bool:
+        """Volcengine Seedream 图像生成（支持角色参考图）。"""
         img_cfg = get_model_config("image").get("volcengine", {})
         creds = get_api_credentials("volcengine", self.cfg)
         if not creds.get("api_key"):
             return False
 
+        # 构建参考图 image_urls（角色参考图 + 场景参考图）
+        image_urls: list[str] = []
+        characters_cfg = self.storyboard.get("characters", {})
+        ref_dir = self.storyboard.get("character_ref_dir", "")
+        for char_id in (characters_in_shot or []):
+            char_info = characters_cfg.get(char_id, {})
+            ref_file = char_info.get("ref_image", "")
+            if ref_file and ref_dir:
+                ref_path = Path(ref_dir) / ref_file
+                if ref_path.exists():
+                    mime = mimetypes.guess_type(str(ref_path))[0] or "image/png"
+                    img_b64 = base64.b64encode(ref_path.read_bytes()).decode()
+                    image_urls.append(f"data:{mime};base64,{img_b64}")
+
+        if scene_image and scene_image.exists():
+            mime = mimetypes.guess_type(str(scene_image))[0] or "image/png"
+            img_b64 = base64.b64encode(scene_image.read_bytes()).decode()
+            image_urls.append(f"data:{mime};base64,{img_b64}")
+
         try:
             timeout = img_cfg.get("timeout", 120)
+            payload = {
+                "model": img_cfg.get("model", "doubao-seedream-4-0-250828"),
+                "prompt": prompt,
+                "size": img_cfg.get("size", "2K"),
+                "response_format": img_cfg.get("response_format", "url"),
+                "watermark": img_cfg.get("watermark", True),
+            }
+            if image_urls:
+                payload["image_urls"] = image_urls
+
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as session:
                 async with session.post(
                     f"{creds['api_base']}/images/generations",
                     headers={"Authorization": f"Bearer {creds['api_key']}", "Content-Type": "application/json"},
-                    json={
-                        "model": img_cfg.get("model", "doubao-seedream-4-0-250828"),
-                        "prompt": prompt,
-                        "size": img_cfg.get("size", "2K"),
-                        "response_format": img_cfg.get("response_format", "url"),
-                        "watermark": img_cfg.get("watermark", True),
-                    },
+                    json=payload,
                 ) as resp:
                     if resp.status != 200:
                         return False
