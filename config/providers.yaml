@@ -14,15 +14,20 @@ providers:
 # 各功能模块的模型和参数配置
 models:
   video:
-    provider: byteplus
-    model: "seedance-1-5-pro-251215"
-    ratio: "16:9"
-    resolution: "720p"
-    generate_audio: true
-    poll_interval: 5
-    poll_max_attempts: 60
-    submit_timeout: 30
-    poll_timeout: 15
+    fallback_chain: [byteplus]
+    max_retries: 2
+    retry_delay: 5
+    byteplus:
+      model: "seedance-1-5-pro-251215"
+      ratio: "16:9"
+      resolution: "720p"
+      generate_audio: true
+      min_duration: 5
+      max_duration: 12
+      poll_interval: 5
+      poll_max_attempts: 60
+      submit_timeout: 30
+      poll_timeout: 15
 
   image:
     fallback_chain: [volcengine, apimart, fal]

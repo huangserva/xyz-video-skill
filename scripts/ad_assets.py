@@ -998,22 +998,65 @@ class AssetGenerator:
         estimated_duration: int = 10,
         last_frame_path: Path | None = None,
     ) -> tuple[Path | None, str]:
-        """图生视频：BytePlus Seedance 1.5 Pro。"""
+        """图生视频：dispatch + fallback_chain 模式。"""
         out = self.video_dir / f"shot_{shot_id:03d}.mp4"
-        # Seedance 1.5 Pro 支持 [5, 12] 秒整数，clamp 到范围内
-        seedance_duration = max(5, min(12, estimated_duration))
-        logger.info(f"shot_{shot_id}: estimated_duration={estimated_duration}s → seedance_duration={seedance_duration}s")
+        video_cfg = get_model_config("video")
 
-        if await self._video_seedance(image_path, prompt, out, duration=seedance_duration, last_frame_path=last_frame_path):
-            return out, "seedance"
+        # ── Backward compat: 旧扁平格式 → 新嵌套格式 ──
+        if "provider" in video_cfg and "fallback_chain" not in video_cfg:
+            old_provider = video_cfg["provider"]
+            fallback_chain = [old_provider]
+            max_retries = 1
+            retry_delay = 5
+        else:
+            fallback_chain = video_cfg.get("fallback_chain", ["byteplus"])
+            max_retries = video_cfg.get("max_retries", 2)
+            retry_delay = video_cfg.get("retry_delay", 5)
+
+        dispatch = {
+            "byteplus": lambda img, p, o, dur, lf: self._video_seedance(
+                img, p, o, duration=dur, last_frame_path=lf
+            ),
+        }
+
+        for provider in fallback_chain:
+            fn = dispatch.get(provider)
+            if not fn:
+                logger.warning(f"shot_{shot_id}: 未知视频 provider '{provider}'，跳过")
+                continue
+
+            # 读取 per-provider 配置（兼容旧格式）
+            if "provider" in video_cfg and "fallback_chain" not in video_cfg:
+                pcfg = video_cfg
+            else:
+                pcfg = video_cfg.get(provider, {})
+
+            min_dur = pcfg.get("min_duration", 5)
+            max_dur = pcfg.get("max_duration", 12)
+            clamped = max(min_dur, min(max_dur, estimated_duration))
+            logger.info(f"shot_{shot_id}: estimated_duration={estimated_duration}s → clamped={clamped}s (provider={provider})")
+
+            for attempt in range(max_retries):
+                if await fn(image_path, prompt, out, clamped, last_frame_path):
+                    return out, provider
+                if attempt < max_retries - 1:
+                    logger.warning(f"shot_{shot_id}: {provider} 第 {attempt+1} 次失败，{retry_delay}s 后重试")
+                    await asyncio.sleep(retry_delay)
+            logger.warning(f"shot_{shot_id}: {provider} {max_retries} 次全部失败，尝试下一个 provider")
 
         logger.warning(f"视频生成失败 shot_{shot_id}，将使用静态图 fallback")
         return None, "none"
 
     async def _video_seedance(self, image_path: Path, prompt: str, output: Path, duration: int = 10, last_frame_path: Path | None = None) -> bool:
-        """BytePlus Seedance I2V（图生视频），参数从 providers.yaml 读取。"""
+        """BytePlus Seedance I2V（图生视频），支持 batch 模式和 per-provider 配置。"""
         video_cfg = get_model_config("video")
-        creds = get_api_credentials(video_cfg.get("provider", "byteplus"), self.cfg)
+        # Per-provider config: 新格式用 video_cfg["byteplus"]，旧格式用 video_cfg 自身
+        if "byteplus" in video_cfg and isinstance(video_cfg["byteplus"], dict):
+            pcfg = video_cfg["byteplus"]
+        else:
+            pcfg = video_cfg  # 旧扁平格式兼容
+
+        creds = get_api_credentials("byteplus", self.cfg)
         if not creds.get("api_key"):
             logger.warning("byteplus api_key 未配置，跳过 Seedance")
             return False
@@ -1029,7 +1072,13 @@ class AssetGenerator:
 
             api_base = creds["api_base"]
             api_key = creds["api_key"]
-            model = video_cfg.get("model", "seedance-1-5-pro-251215")
+
+            # Batch 模式：model 以 -batch 结尾时启用 flex tier
+            raw_model = pcfg.get("model", "seedance-1-5-pro-251215")
+            batch_mode = raw_model.endswith("-batch")
+            model = raw_model.removesuffix("-batch") if batch_mode else raw_model
+            if batch_mode:
+                logger.info(f"Seedance batch mode: {raw_model} → {model}")
 
             # 构建 content 数组：首帧 + (尾帧) + prompt
             content = [
@@ -1044,7 +1093,19 @@ class AssetGenerator:
                 logger.info("Seedance: 已添加 last_frame 约束")
 
             # 1) 提交任务
-            submit_timeout = video_cfg.get("submit_timeout", 30)
+            payload = {
+                "model": model,
+                "content": content,
+                "duration": duration,
+                "ratio": pcfg.get("ratio", "16:9"),
+                "resolution": pcfg.get("resolution", "720p"),
+                "generate_audio": pcfg.get("generate_audio", True),
+            }
+            if batch_mode:
+                payload["service_tier"] = "flex"
+                payload["execution_expires_after"] = 86400
+
+            submit_timeout = pcfg.get("submit_timeout", 30)
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=submit_timeout)) as session:
                 async with session.post(
                     f"{api_base}/contents/generations/tasks",
@@ -1052,14 +1113,7 @@ class AssetGenerator:
                         "Authorization": f"Bearer {api_key}",
                         "Content-Type": "application/json",
                     },
-                    json={
-                        "model": model,
-                        "content": content,
-                        "duration": duration,
-                        "ratio": video_cfg.get("ratio", "16:9"),
-                        "resolution": video_cfg.get("resolution", "720p"),
-                        "generate_audio": video_cfg.get("generate_audio", True),
-                    },
+                    json=payload,
                 ) as resp:
                     if resp.status != 200:
                         body = await resp.text()
@@ -1070,12 +1124,14 @@ class AssetGenerator:
                     if not task_id:
                         logger.warning(f"Seedance 返回无 task_id: {data}")
                         return False
-                    logger.info(f"Seedance 任务已提交: {task_id}")
+                    mode_tag = " [batch]" if batch_mode else ""
+                    logger.info(f"Seedance{mode_tag} 任务已提交: {task_id}")
 
             # 2) 轮询任务
-            poll_timeout = video_cfg.get("poll_timeout", 15)
-            poll_interval = video_cfg.get("poll_interval", 5)
-            poll_max = video_cfg.get("poll_max_attempts", 60)
+            poll_timeout = pcfg.get("poll_timeout", 15)
+            poll_interval = pcfg.get("poll_interval", 5)
+            default_poll_max = 720 if batch_mode else 60
+            poll_max = pcfg.get("poll_max_attempts", default_poll_max)
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=poll_timeout)) as session:
                 for attempt in range(poll_max):
                     await asyncio.sleep(poll_interval)
@@ -1105,7 +1161,8 @@ class AssetGenerator:
 
                         # running / pending — 继续等
                         if attempt % 6 == 0:
-                            logger.info(f"Seedance 生成中... ({attempt * 5}s)")
+                            elapsed = attempt * poll_interval
+                            logger.info(f"Seedance{mode_tag} 生成中... ({elapsed}s)")
 
             logger.warning(f"Seedance 超时（{poll_max * poll_interval}s）")
             return False
