@@ -104,6 +104,15 @@ def re_audit_shot(
 
                 if overall_action in ("cut_segment", "keep"):
                     entry["status"] = "finalized"
+                    # 执行片段裁剪
+                    if overall_action == "cut_segment":
+                        segments_to_cut = [
+                            {"start": seg["start"], "end": seg["end"]}
+                            for seg in judge_result.get("segments", [])
+                            if seg.get("action") == "cut_segment"
+                        ]
+                        if segments_to_cut:
+                            entry["quality"]["cut_segments"] = segments_to_cut
                 elif overall_action == "regenerate":
                     entry["status"] = "applied"
             else:
