@@ -1,0 +1,400 @@
+# xyz-video-skill
+
+`xyz-video-skill` 是一个面向 OpenClaw 的视频生成 skill。
+
+它不是“一键广告片 CLI”，而是一条由宿主 LLM 驱动、由 Python 脚本执行的端到端视频生产流水线：
+
+- 宿主 LLM 负责故事创作、结构化剧本、角色设计、分镜脚本
+- Python 脚本负责角色参考图、镜头素材、品牌化处理和 FFmpeg 合成
+
+## Current Scope
+
+当前仓库已经覆盖的核心能力：
+
+- `story.json` → `framework.json` → `storyboard.json` 的 skill 工作流约束
+- 角色参考图生成
+- 镜头图片 / 视频 / BGM 素材生成
+- 品牌化处理（Logo、字幕条、水印、产品贴图）
+- 多平台视频合成（竖版 / 方版 / 横版）
+- **连续性控制策略**：通过 `continuity_mode` 字段控制尾帧生成
+  - `strict`：关键镜头强约束终点（情绪转折、状态大变化）
+  - `scene_end`：默认行为，仅 scene 末尾生成尾帧
+  - `free`：氛围空镜，不生成尾帧约束
+- **中间关键帧策略**：可选 `keyframes` 描述镜头中间状态
+  - 仅支持多参考图的视频模型会使用
+  - 其他模型会自动忽略，仍走首帧 / 尾帧模式
+- **两阶段视频质量审查**：每段视频生成后自动检测
+  - **阶段1 - 粗筛检测**：
+    - 帧间突变 + 闪烁检测（MSE 分析）
+    - 局部突变检测（spike detection，捕捉面部变形/画面撕裂）
+    - 人脸变形检测（OpenCV DNN，追踪人脸置信度骤降）
+    - HOG 人体检测（检测重复角色/identity hallucination）
+    - 导出风险片段和关键帧到 `vision_bundle`
+  - **阶段2 - LLM 视觉判断**：
+    - LLM 查看风险帧图片，做最终裁定
+    - 支持两种模式：
+      - 默认：母模型（当前对话 LLM）手动判断
+      - 可选：调用外部 API 自动判断（需配置 `use_external_api: true`）
+    - 决策规则：问题片段 < 50% → 裁剪，≥ 50% → 重新生成
+    - 自动合并相邻问题片段（间隔 < 0.5s）
+  - **状态追踪**：`audited` → `pending_judgment` → `judged` → `applied/finalized`
+
+当前仓库还没有覆盖的能力：
+
+- 自动生成 `publish.json`
+- 自动导出 Remotion 配置
+
+## Repository Layout
+
+```text
+.
+├── SKILL.md                  # OpenClaw skill 主入口
+├── TASK.md                   # 仓库定位和现状说明
+├── config/
+│   ├── api_keys.yaml.example # API 配置模板
+│   ├── platforms.yaml        # 平台尺寸配置
+│   └── providers.yaml        # provider / model 配置
+├── scripts/
+│   ├── ad_assets.py          # 角色参考图 / 素材 / BGM 生成
+│   ├── ad_brand.py           # 品牌化处理
+│   ├── ad_compose.py         # FFmpeg 合成
+│   ├── vision_judge.py       # LLM 视觉质量判断
+│   ├── re_audit_videos.py    # 离线重新审计视频
+│   ├── run_pipeline.py       # 执行编排器
+│   ├── validate_json.py      # JSON 结构校验
+│   ├── content_filter.py     # prompt 构造与过滤
+│   ├── image_composer.py     # 图像辅助处理
+│   ├── models.py             # 数据模型
+│   └── utils.py              # 通用工具
+├── templates/                # 提示词模板
+├── examples/sample_output/   # 历史样例输出
+└── models/                   # 本地视觉模型资源
+```
+
+## Requirements
+
+- Python `3.11+`，当前脚本默认 shebang 使用 `/opt/homebrew/bin/python3.14`
+- `ffmpeg` / `ffprobe`
+- 可用的图像、视频、BGM 外部 API Key
+
+建议先安装依赖：
+
+```bash
+cd skills/xyz-video-skill
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+## Configuration
+
+复制 API 配置模板：
+
+```bash
+cp config/api_keys.yaml.example config/api_keys.yaml
+```
+
+主要配置文件：
+
+- `config/api_keys.yaml`：本地 API Key
+- `config/providers.yaml`：provider 和模型 fallback 链
+- `config/platforms.yaml`：输出平台尺寸
+
+也可以通过环境变量覆盖部分 API 设置，例如：
+
+- `VOLCENGINE_API_KEY`
+- `APIMART_API_KEY`
+- `BYTEPLUS_API_KEY`
+- `OPENROUTER_API_KEY`
+- `VIDEO_OUTPUT_ROOT`
+
+## Workflow
+
+### 1. 由宿主 LLM 生成结构化 JSON
+
+按照 `SKILL.md` 流程产出：
+
+1. `story.json`
+2. `framework.json`
+3. `storyboard.json`
+
+### 2. 生成角色参考图
+
+```bash
+python3 scripts/ad_assets.py \
+  --mode character_refs \
+  --framework /path/to/framework.json \
+  --output_dir /path/to/output/character_refs
+```
+
+### 3. 生成镜头素材
+
+```bash
+python3 scripts/ad_assets.py \
+  --mode assets \
+  --storyboard /path/to/storyboard.json \
+  --output_dir /path/to/output/assets
+```
+
+### 4. 可选品牌化
+
+```bash
+python3 scripts/ad_brand.py \
+  --assets_manifest /path/to/output/assets/assets.json \
+  --storyboard_file /path/to/storyboard.json \
+  --brand_color '#FF6A00' \
+  --output_dir /path/to/output/brand
+```
+
+### 5. 合成成片
+
+```bash
+python3 scripts/ad_compose.py \
+  --storyboard /path/to/storyboard.json \
+  --assets /path/to/output/assets/assets.json \
+  --platform douyin wechat youtube \
+  --output_dir /path/to/output/videos
+```
+
+### 6. 使用 orchestrator 串执行步骤
+
+如果你已经准备好了 `framework.json` 和 `storyboard.json`，可以直接用执行编排器：
+
+```bash
+python3 scripts/run_pipeline.py \
+  --framework /path/to/framework.json \
+  --storyboard /path/to/storyboard.json \
+  --platform douyin wechat youtube
+```
+
+它会按顺序执行：
+
+- 校验 JSON
+- 生成角色参考图
+- 生成素材
+- 可选品牌化
+- 合成视频
+
+注意：
+
+- `run_pipeline.py` 是执行编排器，不会替你生成故事或分镜
+- `story.json` 目前仅用于校验和留档，不参与后续执行
+- 如果你不想生成参考图，可传 `--skip_refs`
+- 如果你只想跑到素材阶段，可传 `--skip_compose`
+- 更推荐用 `--from` / `--to` 精确选择阶段范围
+
+## Validate JSON
+
+在调用素材生成或视频合成前，建议先校验结构化 JSON：
+
+```bash
+python3 scripts/validate_json.py /path/to/story.json
+python3 scripts/validate_json.py /path/to/framework.json
+python3 scripts/validate_json.py /path/to/storyboard.json
+```
+
+也可以一次校验多个文件：
+
+```bash
+python3 scripts/validate_json.py \
+  /path/to/story.json \
+  /path/to/framework.json \
+  /path/to/storyboard.json
+```
+
+输出说明：
+
+- `OK`：结构满足当前最小合同
+- `WARN`：可运行，但存在 legacy 结构或可疑字段
+- `ERROR`：关键字段缺失、引用错误或层级不合法
+
+当前校验器覆盖：
+
+- `story.json` 的核心字段和 `story_beats`
+- `framework.json` 的角色、地点、场景与引用关系
+- `storyboard.json` 的 `scenes > shots` 主结构
+- 兼容 legacy 的 flat `shots` 结构，并给出警告
+
+## Orchestrator
+
+`scripts/run_pipeline.py` 是当前仓库的执行编排入口。
+
+示例：
+
+```bash
+python3 scripts/run_pipeline.py \
+  --story /path/to/story.json \
+  --framework /path/to/framework.json \
+  --storyboard /path/to/storyboard.json \
+  --platform douyin wechat youtube \
+  --logo_path /path/to/logo.png \
+  --brand_color '#FF6A00'
+```
+
+常用参数：
+
+- `--from validate|refs|assets|brand|compose`
+- `--to validate|refs|assets|brand|compose`
+- `--assets_manifest /path/to/assets.json`
+- `--brand_manifest /path/to/brand_manifest.json`
+- `--skip_validate`
+- `--skip_refs`
+- `--skip_assets`
+- `--skip_brand`
+- `--skip_compose`
+- `--no_api`
+- `--output_dir`
+
+输出：
+
+- `pipeline_result.json`
+- `_normalized/storyboard.json`
+- `character_refs/`
+- `assets/`
+- `brand/`
+- `videos/`
+
+阶段示例：
+
+```bash
+# 只跑参考图到素材
+python3 scripts/run_pipeline.py \
+  --framework /path/to/framework.json \
+  --storyboard /path/to/storyboard.json \
+  --from refs \
+  --to assets
+
+# 已经有素材，只重跑品牌化和合成
+python3 scripts/run_pipeline.py \
+  --storyboard /path/to/storyboard.json \
+  --assets_manifest /path/to/assets/assets.json \
+  --from brand \
+  --to compose \
+  --logo_path /path/to/logo.png
+
+# 只从合成阶段继续
+python3 scripts/run_pipeline.py \
+  --storyboard /path/to/storyboard.json \
+  --brand_manifest /path/to/brand/brand_manifest.json \
+  --from compose
+```
+
+## Video Quality Review
+
+视频生成后会自动进行两阶段质量审查：
+
+### 阶段1：粗筛检测（自动）
+
+生成视频时，系统会自动检测问题并导出 `vision_bundle`：
+
+```bash
+python3 scripts/ad_assets.py \
+  --mode assets \
+  --storyboard /path/to/storyboard.json \
+  --review_mode hybrid_judge \
+  --output_dir /path/to/output/assets
+```
+
+输出：
+- `assets/audit/shot_XXX/quality_audit.json` - 审计报告
+- `assets/audit/shot_XXX/vision_bundle_attempt_N/` - 风险帧图片
+- `assets/audit/shot_XXX/vision_bundle_attempt_N/vision_judge_request.json` - 判断请求
+
+### 阶段2：LLM 视觉判断
+
+**默认模式（母模型手动判断）**：
+
+1. 查看 `vision_bundle` 中的风险帧图片
+2. 创建 `vision_judge_result.json`：
+
+```json
+{
+  "shot_id": "001",
+  "segments": [
+    {
+      "start": 2.5,
+      "end": 3.0,
+      "issue_type": "identity_hallucination",
+      "severity": "high",
+      "confidence": 0.95,
+      "action": "cut_segment",
+      "reason": "Duplicate character appears"
+    }
+  ],
+  "overall_action": "cut_segment",
+  "fallback_used": false
+}
+```
+
+3. 重新运行生成流程，系统会读取判断结果并执行决策
+
+**外部 API 模式**：
+
+在 `config/providers.yaml` 中配置：
+
+```yaml
+vision_judge:
+  use_external_api: true
+  provider: apimart
+  model: gpt-4o
+```
+
+系统会自动调用外部 API 完成判断。
+
+### 离线重新审计
+
+如果需要用新的检测参数重新审计已生成的视频：
+
+```bash
+python3 scripts/re_audit_videos.py \
+  --source-audit-root /path/to/output/assets/audit \
+  --output-root /path/to/reaudit \
+  --review_mode hybrid_judge \
+  --chars shot_001=1 shot_002=2 \
+  --facing shot_001=toward_camera \
+  shot_001 shot_002
+```
+
+## Output
+
+默认输出根目录优先使用：
+
+- `VIDEO_OUTPUT_ROOT`
+- `AD_OUTPUT_ROOT`
+- `~/video-output/`
+- 回退到 `/tmp/video-output/`
+
+常见产物：
+
+- `story.json`
+- `framework.json`
+- `storyboard.json`
+- `character_refs/`
+- `assets/assets.json`
+- `brand/brand_manifest.json`
+- `videos/*.mp4`
+
+## OpenClaw Integration
+
+在 OpenClaw 中，正式入口是：
+
+- `skills/xyz-video-skill/SKILL.md`
+
+这个 skill 的核心模式是：
+
+- OpenClaw / 宿主模型负责思考和结构化输出
+- 本仓库脚本负责外部 API 调用与媒体执行
+
+## Known Gaps
+
+- 还没有单入口 orchestrator
+- 还没有强 schema 校验
+- `templates/` 仍有历史迭代遗留
+- `examples/sample_output/` 是历史样例，不是当前严格输出合同
+
+## Recommended Next Steps
+
+1. 增加 `story/framework/storyboard` schema 校验
+2. 增加单命令编排入口
+3. 整理 `templates/` 与 `examples/`
+4. 增加最小可运行 smoke test
