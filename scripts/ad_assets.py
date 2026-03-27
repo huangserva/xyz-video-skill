@@ -348,8 +348,17 @@ class AssetGenerator:
                             elif overall_action == "cut_segment":
                                 audit_entry["status"] = "finalized"
                                 audit_entry["action"] = "cut_segment"
+                                # 执行片段裁剪
+                                segments_to_cut = [
+                                    {"start": seg["start"], "end": seg["end"]}
+                                    for seg in judge_result.get("segments", [])
+                                    if seg.get("action") == "cut_segment"
+                                ]
+                                if segments_to_cut:
+                                    quality["cut_segments"] = segments_to_cut
+                                    audit_entry["quality"]["cut_segments"] = segments_to_cut
+                                    logger.info(f"shot_{shot.get('id')}: 将裁剪 {len(segments_to_cut)} 个片段")
                                 audit_log.append(audit_entry)
-                                logger.info(f"shot_{shot.get('id')}: vision judge 建议裁剪片段")
                                 break
                             else:
                                 audit_entry["status"] = "finalized"

@@ -62,6 +62,7 @@ def re_audit_shot(
             "attempt": attempt,
             "source_video": str(source_video),
             "raw_video": str(raw_copy),
+            "status": "audited",
             "quality": {
                 "ok": quality["ok"],
                 "needs_regeneration": quality["needs_regeneration"],
@@ -94,12 +95,20 @@ def re_audit_shot(
             bundle_dir = shot_dir / f"vision_bundle_attempt_{attempt}"
             judge_result_path = bundle_dir / "vision_judge_result.json"
             if judge_result_path.exists():
+                entry["status"] = "judged"
                 with open(judge_result_path, encoding="utf-8") as f:
                     judge_result = json.load(f)
-                entry["action"] = judge_result.get("overall_action", "keep")
+                overall_action = judge_result.get("overall_action", "keep")
+                entry["action"] = overall_action
                 entry["vision_judge_result"] = judge_result
+
+                if overall_action in ("cut_segment", "keep"):
+                    entry["status"] = "finalized"
+                elif overall_action == "regenerate":
+                    entry["status"] = "applied"
             else:
-                entry["action"] = "vision_judge_failed"
+                entry["status"] = "pending_judgment"
+                entry["action"] = "vision_judge_pending"
 
             audit_log.append(entry)
             continue
