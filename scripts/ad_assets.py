@@ -15,6 +15,7 @@ import logging
 import os
 import mimetypes
 import subprocess
+import sys
 import tempfile
 import wave
 from pathlib import Path
@@ -27,6 +28,53 @@ from utils import get_api_credentials, get_model_config, load_external_api_confi
 from content_filter import ContentFilter, VideoPromptBuilder
 
 logger = logging.getLogger(__name__)
+DETECTOR_VERSION = "quality_profiles_v5"
+REVIEW_MODES = {"metrics_only", "hybrid_judge"}
+
+QUALITY_PROFILES: dict[str, dict[str, float | int]] = {
+    "static": {
+        "threshold_base": 250,
+        "threshold_multiplier": 6,
+        "required_stable": 6,
+        "consecutive_bad": 8,
+        "grace_window_frames": 8,
+        "confirm_bad_frames": 6,
+        "trim_backoff_frames": 2,
+        "min_amplitude_base": 80,
+        "min_amplitude_multiplier": 4,
+        "reversal_count": 8,
+        "spike_factor": 2.0,
+        "spike_abs_min": 120,
+    },
+    "medium_motion": {
+        "threshold_base": 350,
+        "threshold_multiplier": 10,
+        "required_stable": 6,
+        "consecutive_bad": 14,
+        "grace_window_frames": 12,
+        "confirm_bad_frames": 8,
+        "trim_backoff_frames": 3,
+        "min_amplitude_base": 120,
+        "min_amplitude_multiplier": 5,
+        "reversal_count": 10,
+        "spike_factor": 3.0,
+        "spike_abs_min": 180,
+    },
+    "heavy_motion": {
+        "threshold_base": 500,
+        "threshold_multiplier": 14,
+        "required_stable": 8,
+        "consecutive_bad": 20,
+        "grace_window_frames": 18,
+        "confirm_bad_frames": 10,
+        "trim_backoff_frames": 4,
+        "min_amplitude_base": 180,
+        "min_amplitude_multiplier": 6,
+        "reversal_count": 12,
+        "spike_factor": 3.5,
+        "spike_abs_min": 250,
+    },
+}
 
 # ── Gemini 图片生成 system prompt ────────────────────────────────
 
@@ -63,6 +111,7 @@ class AssetGenerator:
         image_height: int = 1024,
         parallel: int = 4,
         use_api: bool = True,
+        review_mode: str | None = None,
     ):
         self.storyboard = storyboard
         self.output_root = output_root
@@ -80,6 +129,57 @@ class AssetGenerator:
             d.mkdir(parents=True, exist_ok=True)
 
         self.cfg = load_external_api_config()
+        video_cfg = get_model_config("video")
+        configured_review_mode = str(video_cfg.get("review_mode", "metrics_only")).strip() or "metrics_only"
+        self.review_mode = review_mode or configured_review_mode
+        if self.review_mode not in REVIEW_MODES:
+            logger.warning(f"未知 review_mode={self.review_mode}，回退到 metrics_only")
+            self.review_mode = "metrics_only"
+
+    def _video_fallback_chain(self) -> list[str]:
+        video_cfg = get_model_config("video")
+        if "provider" in video_cfg and "fallback_chain" not in video_cfg:
+            provider = str(video_cfg.get("provider", "byteplus")).strip()
+            return [provider] if provider else ["byteplus"]
+        return list(video_cfg.get("fallback_chain", ["byteplus"]))
+
+    def _video_provider_config(self, provider: str) -> dict[str, Any]:
+        video_cfg = get_model_config("video")
+        if "provider" in video_cfg and "fallback_chain" not in video_cfg:
+            selected = str(video_cfg.get("provider", "")).strip()
+            return video_cfg if provider == selected else {}
+        return dict(video_cfg.get(provider, {}))
+
+    def _any_video_provider_supports_keyframes(self) -> bool:
+        return any(
+            bool(self._video_provider_config(provider).get("supports_keyframes", False))
+            for provider in self._video_fallback_chain()
+        )
+
+    def _max_video_reference_images(self) -> int:
+        max_refs = 2
+        for provider in self._video_fallback_chain():
+            pcfg = self._video_provider_config(provider)
+            if not pcfg:
+                continue
+            max_refs = max(max_refs, int(pcfg.get("max_reference_images", 2)))
+        return max_refs
+
+    @staticmethod
+    def _quality_profile_for_camera(camera_movement: str) -> str:
+        movement = camera_movement.strip().lower()
+        if not movement or movement == "static":
+            return "static"
+        if any(token in movement for token in ["orbital", "crane", "whip", "rapid", "fast", "handheld", "tracking"]):
+            return "heavy_motion"
+        return "medium_motion"
+
+    def _review_config(self) -> dict[str, Any]:
+        video_cfg = get_model_config("video")
+        review_cfg = dict(video_cfg.get("review", {}).get(self.review_mode, {}))
+        review_cfg.setdefault("metrics_profile", "strict" if self.review_mode == "hybrid_judge" else "relaxed")
+        review_cfg.setdefault("export_risk_bundle", self.review_mode == "hybrid_judge")
+        return review_cfg
 
     async def run(self) -> dict[str, Any]:
         """执行素材生成。"""
@@ -140,7 +240,8 @@ class AssetGenerator:
             for i, shot in enumerate(scene_shots):
                 shot_index += 1
                 is_last_in_scene = (i == len(scene_shots) - 1)
-                logger.info(f"处理镜头 {shot_index}/{len(all_shots)} (scene_last={is_last_in_scene})")
+                continuity_mode = shot.get("continuity_mode", "scene_end")
+                logger.info(f"处理镜头 {shot_index}/{len(all_shots)} (scene_last={is_last_in_scene}, continuity={continuity_mode})")
 
                 # chain_from_previous: 从上一 shot 的实际视频提取尾帧作为首帧
                 chain = shot.get("chain_from_previous", False)
@@ -160,18 +261,111 @@ class AssetGenerator:
                     shot, provided_first_frame=first_frame,
                     scene_context=scene_context, extracted_prompts=extracted_prompts,
                     is_last_in_scene=is_last_in_scene,
+                    continuity_mode=continuity_mode,
                 )
 
-                # 视频质量检测 + 自动重试/裁剪
+                # 视频质量检测 + 自动重试/裁剪 + 审查追踪
                 max_retries = 2
+                shot_id_str = f"shot_{shot.get('id', 0):03d}"
+                audit_dir = self.video_dir.parent / "audit" / shot_id_str
+                audit_dir.mkdir(parents=True, exist_ok=True)
+                audit_log: list[dict[str, Any]] = []
+
                 for attempt in range(max_retries + 1):
                     if "video" not in result:
                         break
 
                     vid_path = Path(result["video"]["path"])
-                    quality = self._scan_video_quality(vid_path)
+
+                    # 保存原始视频副本（不被裁剪覆盖）
+                    raw_copy = audit_dir / f"raw_attempt_{attempt + 1}.mp4"
+                    import shutil
+                    shutil.copy2(vid_path, raw_copy)
+                    logger.info(f"{shot_id_str}: 原始视频已保存 → {raw_copy}")
+
+                    quality = self._scan_video_quality(
+                        vid_path,
+                        audit_dir=audit_dir,
+                        attempt=attempt + 1,
+                        camera_movement=str(shot.get("camera_movement", "")),
+                        expected_character_count=len(shot.get("characters_in_shot", [])),
+                        expected_subject_facing=str((shot.get("motion_control") or {}).get("subject_facing", "")),
+                        review_mode=self.review_mode,
+                    )
+
+                    audit_entry = {
+                        "attempt": attempt + 1,
+                        "source_video": str(raw_copy),
+                        "raw_video": str(raw_copy),
+                        "status": "audited",
+                        "quality": {
+                            "ok": quality["ok"],
+                            "needs_regeneration": quality["needs_regeneration"],
+                            "trim_to": quality["trim_to"],
+                            "duration": quality["duration"],
+                            "profile": quality.get("profile"),
+                            "trigger": quality.get("trigger"),
+                            "analysis": quality.get("analysis", {}),
+                            "bad_segments": quality.get("bad_segments", []),
+                            "cut_segments": quality.get("cut_segments", []),
+                            "risk_segments": quality.get("risk_segments", []),
+                        },
+                        "detector_version": DETECTOR_VERSION,
+                        "review_mode": self.review_mode,
+                    }
+
+                    if self.review_mode == "hybrid_judge":
+                        self._export_risk_bundle(
+                            video_path=vid_path,
+                            audit_dir=audit_dir,
+                            attempt=attempt + 1,
+                            quality=quality,
+                            shot=shot,
+                        )
+
+                        # 读取 vision_judge 结果并应用决策
+                        bundle_dir = audit_dir / f"vision_bundle_attempt_{attempt + 1}"
+                        judge_result_path = bundle_dir / "vision_judge_result.json"
+                        if judge_result_path.exists():
+                            audit_entry["status"] = "judged"
+                            with open(judge_result_path, encoding="utf-8") as f:
+                                judge_result = json.load(f)
+                            overall_action = judge_result.get("overall_action", "keep")
+                            audit_entry["action"] = overall_action
+                            audit_entry["vision_judge_result"] = judge_result
+
+                            if overall_action == "regenerate" and attempt < max_retries:
+                                audit_entry["status"] = "applied"
+                                audit_log.append(audit_entry)
+                                logger.warning(f"shot_{shot.get('id')}: vision judge 建议重新生成")
+                                result = await self._generate_shot(
+                                    shot, provided_first_frame=first_frame,
+                                    scene_context=scene_context, extracted_prompts=extracted_prompts,
+                                    is_last_in_scene=is_last_in_scene,
+                                    continuity_mode=continuity_mode,
+                                )
+                                continue
+                            elif overall_action == "cut_segment":
+                                audit_entry["status"] = "finalized"
+                                audit_entry["action"] = "cut_segment"
+                                audit_log.append(audit_entry)
+                                logger.info(f"shot_{shot.get('id')}: vision judge 建议裁剪片段")
+                                break
+                            else:
+                                audit_entry["status"] = "finalized"
+                                audit_entry["action"] = "keep"
+                                audit_log.append(audit_entry)
+                                break
+                        else:
+                            audit_entry["status"] = "pending_judgment"
+                            audit_entry["action"] = "vision_judge_pending"
+                            audit_log.append(audit_entry)
+                            logger.info(f"shot_{shot.get('id')}: 等待 LLM 视觉判断，vision_bundle 已导出到 {bundle_dir}")
+                            break
 
                     if quality["needs_regeneration"] and attempt < max_retries:
+                        audit_entry["action"] = "regenerate"
+                        audit_log.append(audit_entry)
                         logger.warning(
                             f"shot_{shot.get('id')}: 质量不合格，重新生成 "
                             f"(尝试 {attempt + 2}/{max_retries + 1})"
@@ -180,18 +374,42 @@ class AssetGenerator:
                             shot, provided_first_frame=first_frame,
                             scene_context=scene_context, extracted_prompts=extracted_prompts,
                             is_last_in_scene=is_last_in_scene,
+                            continuity_mode=continuity_mode,
                         )
                         continue
                     elif quality["needs_regeneration"]:
+                        audit_entry["action"] = "keep_best_effort"
                         logger.error(
                             f"shot_{shot.get('id')}: 重试 {max_retries} 次仍不合格，保留当前结果"
                         )
 
                     # 裁剪到最后一个稳定点
-                    if quality["trim_to"] is not None:
+                    if quality.get("cut_segments"):
+                        self._remove_video_segments(vid_path, quality["cut_segments"])
+                        edited_copy = audit_dir / f"trimmed_attempt_{attempt + 1}.mp4"
+                        shutil.copy2(vid_path, edited_copy)
+                        audit_entry["action"] = audit_entry.get("action", "segment_cut")
+                        audit_entry["trimmed_video"] = str(edited_copy)
+                        logger.info(f"{shot_id_str}: 局部裁剪后视频已保存 → {edited_copy}")
+                    elif quality["trim_to"] is not None:
                         self._trim_video_at(vid_path, quality["trim_to"])
+                        trimmed_copy = audit_dir / f"trimmed_attempt_{attempt + 1}.mp4"
+                        shutil.copy2(vid_path, trimmed_copy)
+                        audit_entry["action"] = audit_entry.get("action", "trimmed")
+                        audit_entry["trimmed_video"] = str(trimmed_copy)
+                        logger.info(f"{shot_id_str}: 裁剪后视频已保存 → {trimmed_copy}")
+                    else:
+                        audit_entry["action"] = audit_entry.get("action", "passed")
 
+                    audit_log.append(audit_entry)
                     break
+
+                # 保存审查日志
+                if audit_log:
+                    audit_json = audit_dir / "quality_audit.json"
+                    with open(audit_json, "w", encoding="utf-8") as f:
+                        json.dump(audit_log, f, indent=2, ensure_ascii=False)
+                    logger.info(f"{shot_id_str}: 质量审查日志 → {audit_json}")
 
                 shot_results.append(result)
 
@@ -233,7 +451,16 @@ class AssetGenerator:
         return None
 
     @staticmethod
-    def _scan_video_quality(video_path: Path, min_keep: float = 3.0) -> dict:
+    def _scan_video_quality(
+        video_path: Path,
+        min_keep: float = 3.0,
+        audit_dir: Path | None = None,
+        attempt: int = 1,
+        camera_movement: str = "",
+        expected_character_count: int = 0,
+        expected_subject_facing: str = "",
+        review_mode: str = "metrics_only",
+    ) -> dict:
         """全帧扫描视频质量，找到最后一个稳定点。
 
         策略：从后往前找到第一个"稳定区域"（连续 N 帧 MSE 都在阈值以下），
@@ -250,7 +477,21 @@ class AssetGenerator:
                 "fps": float,
             }
         """
-        result = {"ok": True, "needs_regeneration": False, "trim_to": None, "duration": 0, "fps": 24}
+        profile_name = AssetGenerator._quality_profile_for_camera(camera_movement)
+        profile = QUALITY_PROFILES[profile_name]
+        result = {
+            "ok": True,
+            "needs_regeneration": False,
+            "trim_to": None,
+            "duration": 0,
+            "fps": 24,
+            "profile": profile_name,
+            "trigger": "passed",
+            "analysis": {},
+            "bad_segments": [],
+            "cut_segments": [],
+            "risk_segments": [],
+        }
 
         # 获取视频信息
         try:
@@ -324,7 +565,15 @@ class AssetGenerator:
             sorted_stable = sorted(diffs[:stable_count])
             median_diff = sorted_stable[len(sorted_stable) // 2]
 
-            threshold = max(300, median_diff * 8)
+            threshold = max(
+                float(profile["threshold_base"]),
+                median_diff * float(profile["threshold_multiplier"]),
+            )
+            result["analysis"].update({
+                "median_diff": median_diff,
+                "threshold": threshold,
+                "stable_sample_count": stable_count,
+            })
 
             # ── 用滑动窗口平滑 MSE，消除闪烁的高低交替 ──
             # 窗口大小 5：每帧的"有效 MSE"= 周围 5 帧的最大值
@@ -337,9 +586,10 @@ class AssetGenerator:
 
             # ── 从后往前找最后一个稳定点 ──
             # "稳定"定义：连续 6 帧平滑后的 MSE 都在阈值以下
-            required_stable = 6
+            required_stable = int(profile["required_stable"])
             stable_run = 0
             last_stable_idx = len(smoothed)  # 默认：整个视频都稳定
+            reverse_first_bad_idx = None
 
             for j in range(len(smoothed) - 1, -1, -1):
                 if smoothed[j] <= threshold:
@@ -348,6 +598,7 @@ class AssetGenerator:
                         last_stable_idx = j + stable_run
                         break
                 else:
+                    reverse_first_bad_idx = j
                     stable_run = 0
 
             if stable_run < required_stable:
@@ -363,38 +614,120 @@ class AssetGenerator:
             # 解决中间段出问题但尾部恢复、导致反向扫描漏检的情况
             consecutive_bad = 0
             first_bad_start = None
+            confirmed_bad_start = None
+            grace_window = int(profile["grace_window_frames"])
+            confirm_bad_frames = int(profile["confirm_bad_frames"])
+            trim_backoff_frames = int(profile["trim_backoff_frames"])
             for j in range(len(smoothed)):
                 if smoothed[j] > threshold:
                     if consecutive_bad == 0:
                         first_bad_start = j
                     consecutive_bad += 1
                 else:
-                    if consecutive_bad >= 12 and first_bad_start is not None:
-                        forward_keep = (first_bad_start + 1) / fps
+                    if consecutive_bad >= int(profile["consecutive_bad"]) and first_bad_start is not None:
+                        confirm_start = min(len(smoothed), first_bad_start + grace_window)
+                        confirm_slice = smoothed[confirm_start:]
+                        confirm_hits = 0
+                        for value in confirm_slice:
+                            if value > threshold:
+                                confirm_hits += 1
+                                if confirm_hits >= confirm_bad_frames:
+                                    confirmed_bad_start = confirm_start
+                                    break
+                            else:
+                                confirm_hits = 0
+                        candidate_idx = max(0, (confirmed_bad_start or first_bad_start) - trim_backoff_frames)
+                        forward_keep = (candidate_idx + 1) / fps
                         if forward_keep < (last_stable_idx + 1) / fps:
-                            last_stable_idx = first_bad_start
-                            logger.info(
-                                f"质量检测: 正向扫描发现异常段 @{forward_keep:.1f}s "
-                                f"({consecutive_bad} 帧)"
-                            )
+                            if confirmed_bad_start is not None:
+                                last_stable_idx = candidate_idx
+                                result["trigger"] = "forward_mse_run"
+                                logger.info(
+                                    f"质量检测: 正向扫描确认异常段 @{forward_keep:.1f}s "
+                                    f"(start={((first_bad_start + 1) / fps):.1f}s, confirm={((confirmed_bad_start + 1) / fps):.1f}s)"
+                                )
                         break
                     consecutive_bad = 0
                     first_bad_start = None
             else:
-                if consecutive_bad >= 12 and first_bad_start is not None:
-                    forward_keep = (first_bad_start + 1) / fps
+                if consecutive_bad >= int(profile["consecutive_bad"]) and first_bad_start is not None:
+                    confirm_start = min(len(smoothed), first_bad_start + grace_window)
+                    confirm_slice = smoothed[confirm_start:]
+                    confirm_hits = 0
+                    for value in confirm_slice:
+                        if value > threshold:
+                            confirm_hits += 1
+                            if confirm_hits >= confirm_bad_frames:
+                                confirmed_bad_start = confirm_start
+                                break
+                        else:
+                            confirm_hits = 0
+                    candidate_idx = max(0, (confirmed_bad_start or first_bad_start) - trim_backoff_frames)
+                    forward_keep = (candidate_idx + 1) / fps
                     if forward_keep < (last_stable_idx + 1) / fps:
-                        last_stable_idx = first_bad_start
+                        if confirmed_bad_start is not None:
+                            last_stable_idx = candidate_idx
+                            result["trigger"] = "forward_mse_run"
 
             # 计算可保留的时长
             keep_time = (last_stable_idx + 1) / fps  # +1 因为 diffs[j] 对应帧 j+1
+            first_over_threshold_idx = next((idx for idx, value in enumerate(smoothed) if value > threshold), None)
+            result["analysis"].update({
+                "required_stable": required_stable,
+                "reverse_first_bad_time": (
+                    (reverse_first_bad_idx + 1) / fps if reverse_first_bad_idx is not None else None
+                ),
+                "forward_bad_start_time": (
+                    (first_bad_start + 1) / fps if first_bad_start is not None else None
+                ),
+                "forward_confirm_time": (
+                    (confirmed_bad_start + 1) / fps if confirmed_bad_start is not None else None
+                ),
+                "first_over_threshold_time": (
+                    (first_over_threshold_idx + 1) / fps if first_over_threshold_idx is not None else None
+                ),
+                "preliminary_keep_time": keep_time,
+                "grace_window_frames": grace_window,
+                "confirm_bad_frames": confirm_bad_frames,
+                "trim_backoff_frames": trim_backoff_frames,
+            })
+
+            motion_ramp_exempt = False
+            motion_ramp_start = first_bad_start
+            if (
+                motion_ramp_start is not None
+                and motion_ramp_start < len(smoothed) - 8
+                and profile_name in {"medium_motion", "heavy_motion"}
+            ):
+                ramp_segment = smoothed[motion_ramp_start:]
+                up_steps = 0
+                large_drops = 0
+                for idx in range(1, len(ramp_segment)):
+                    delta = ramp_segment[idx] - ramp_segment[idx - 1]
+                    if delta >= 0:
+                        up_steps += 1
+                    elif abs(delta) > threshold * 0.2:
+                        large_drops += 1
+                total_steps = max(1, len(ramp_segment) - 1)
+                ramp_up_ratio = up_steps / total_steps
+                ramp_peak = max(ramp_segment)
+                motion_ramp_exempt = ramp_up_ratio >= 0.6 and large_drops <= 1 and ramp_peak >= threshold * 1.2
+                result["analysis"]["motion_ramp"] = {
+                    "start_time": (motion_ramp_start + 1) / fps,
+                    "up_ratio": ramp_up_ratio,
+                    "large_drops": large_drops,
+                    "peak_smoothed": ramp_peak,
+                    "exempted": motion_ramp_exempt,
+                }
 
             # ── 闪烁检测：奇偶帧交替跳变（高-低-高-低模式） ──
             # 正常运动的 MSE 连续渐变，闪烁模式下相邻帧 MSE 反复反转
             # 从后往前找最后一个无闪烁的稳定点
-            min_amplitude = max(100, median_diff * 5)  # 反转幅度阈值（100+过滤自然运动振荡）
+            min_amplitude = max(
+                float(profile["min_amplitude_base"]),
+                median_diff * float(profile["min_amplitude_multiplier"]),
+            )  # 反转幅度阈值
             reversals = 0
-            flicker_end = len(diffs)
 
             for j in range(len(diffs) - 1, 1, -1):
                 going_up = diffs[j] > diffs[j - 1]
@@ -403,11 +736,12 @@ class AssetGenerator:
                 if going_up != was_up and amplitude > min_amplitude:
                     reversals += 1
                 else:
-                    if reversals >= 8:
+                    if reversals >= int(profile["reversal_count"]):
                         # 发现闪烁段，更新 keep_time
                         flicker_start_time = (j + 1) / fps
                         if flicker_start_time < keep_time:
                             keep_time = flicker_start_time
+                            result["trigger"] = "flicker"
                             logger.info(
                                 f"质量检测: 检测到闪烁 ({reversals} 次反转 @{flicker_start_time:.1f}s)，"
                                 f"裁剪到 {keep_time:.1f}s"
@@ -415,16 +749,17 @@ class AssetGenerator:
                     reversals = 0
 
             # 检查开头处的闪烁
-            if reversals >= 8:
+            if reversals >= int(profile["reversal_count"]):
                 flicker_start_time = 2 / fps
                 if flicker_start_time < keep_time:
                     keep_time = flicker_start_time
+                    result["trigger"] = "flicker"
 
             # ── 局部突变检测：单帧或少数帧的面部变形/跳变 ──
             # 用滑动窗口计算局部均值，如果某帧 MSE 超过局部均值的 spike_factor 倍
             # 且绝对值超过 spike_abs_min，标记为 spike
-            spike_factor = 2.5
-            spike_abs_min = 150
+            spike_factor = float(profile["spike_factor"])
+            spike_abs_min = float(profile["spike_abs_min"])
             spike_window = 12  # 前后各 12 帧（约 0.5s）计算局部基准
             spike_count = 0
             first_spike_time = None
@@ -454,10 +789,43 @@ class AssetGenerator:
                 spike_trim = first_spike_time - 0.1  # 在第一个突变前 0.1s 裁
                 if spike_trim > 0 and spike_trim < keep_time:
                     keep_time = spike_trim
+                    result["trigger"] = "spike"
                     logger.info(
                         f"质量检测: 检测到 {spike_count} 个局部突变，"
                         f"首个 @{first_spike_time:.1f}s，裁剪到 {keep_time:.1f}s"
                     )
+            result["analysis"]["first_spike_time"] = first_spike_time
+
+            semantic_segments = AssetGenerator._semantic_audit_video(
+                video_path=video_path,
+                fps=fps,
+                duration=duration,
+                expected_character_count=expected_character_count,
+                expected_subject_facing=expected_subject_facing,
+            )
+            result["bad_segments"] = semantic_segments
+            risk_segments: list[dict[str, Any]] = []
+            if semantic_segments:
+                result["analysis"]["semantic_reasons"] = [segment["reason"] for segment in semantic_segments]
+                risk_segments.extend(dict(segment) for segment in semantic_segments)
+                tail_segment = next(
+                    (segment for segment in semantic_segments if segment["end"] >= duration - 0.3 and segment["start"] >= min_keep),
+                    None,
+                )
+                cut_segment = next(
+                    (
+                        segment for segment in semantic_segments
+                        if segment["end"] < duration - 0.3
+                        and duration - (segment["end"] - segment["start"]) >= min_keep
+                    ),
+                    None,
+                )
+                if tail_segment is not None:
+                    keep_time = min(keep_time, float(tail_segment["start"]))
+                    result["trigger"] = str(tail_segment["reason"])
+                elif cut_segment is not None:
+                    result["cut_segments"] = [cut_segment]
+                    result["trigger"] = str(cut_segment["reason"])
 
             # ── 人脸变形检测：DNN 置信度骤降 ──
             # 用 OpenCV DNN SSD 人脸检测器，追踪人脸置信度变化
@@ -529,42 +897,510 @@ class AssetGenerator:
                             if remaining > 1.5 and not face_returned:
                                 # 脸消失后再也没回来 → 脸部变形
                                 face_trim = last_good_face_time + 0.3
+                                result["analysis"]["last_good_face_time"] = last_good_face_time
                                 if face_trim < keep_time:
-                                    keep_time = face_trim
-                                    logger.info(
-                                        f"质量检测: 人脸置信度骤降，"
-                                        f"最后稳定 @{last_good_face_time:.1f}s，"
-                                        f"裁剪到 {keep_time:.1f}s"
-                                    )
+                                    result["analysis"]["face_dnn_warning_time"] = face_trim
             except ImportError:
                 pass  # cv2 不可用，跳过人脸检测
             except Exception as e:
                 logger.debug(f"质量检测: 人脸检测跳过 ({e})")
 
+            top_diff_indices = sorted(range(len(diffs)), key=lambda idx: diffs[idx], reverse=True)[:5]
+            result["analysis"]["top_diffs"] = [
+                {
+                    "time": (idx + 1) / fps,
+                    "diff": diffs[idx],
+                    "smoothed": smoothed[idx],
+                }
+                for idx in top_diff_indices
+            ]
+            strong_trigger = result["trigger"] in {
+                "flicker",
+                "spike",
+                "identity_hallucination",
+                "face_orientation_discontinuity",
+                "face_identity_drift",
+                "head_body_inconsistency",
+            }
+            suggested_keep_time = keep_time
+
+            if result["trigger"] == "forward_mse_run" and motion_ramp_exempt and not strong_trigger:
+                result["analysis"]["suggested_trim_time"] = suggested_keep_time
+                result["analysis"]["exemption_reason"] = "continuous_motion_ramp"
+                result["trigger"] = "motion_ramp_exempt"
+                keep_time = duration
+
+            if result["trigger"] == "forward_mse_run" and profile_name == "heavy_motion" and not strong_trigger:
+                result["analysis"]["suggested_trim_time"] = suggested_keep_time
+                result["analysis"]["exemption_reason"] = "heavy_motion_warning_only"
+                result["trigger"] = "forward_mse_warning"
+                keep_time = duration
+
+            if result["trigger"] == "passed" and keep_time < duration - 0.1:
+                result["analysis"]["suggested_trim_time"] = suggested_keep_time
+                result["analysis"]["exemption_reason"] = "tail_mse_warning_only"
+                result["trigger"] = "reverse_mse_tail_warning"
+                keep_time = duration
+
+            if suggested_keep_time < duration - 0.1:
+                risk_segments.append(
+                    {
+                        "start": max(0.0, suggested_keep_time - 0.35),
+                        "end": min(duration, suggested_keep_time + 0.75),
+                        "reason": result["trigger"],
+                        "confidence": 0.65,
+                    }
+                )
+
+            result["risk_segments"] = AssetGenerator._merge_segments(risk_segments)
+
+            result["analysis"]["final_keep_time"] = keep_time
+
+            if review_mode == "hybrid_judge":
+                result["analysis"]["review_mode"] = "hybrid_judge"
+                result["analysis"]["metrics_action"] = {
+                    "trim_to": result["trim_to"],
+                    "cut_segments": result["cut_segments"],
+                    "trigger": result["trigger"],
+                }
+                result["trim_to"] = None
+                result["cut_segments"] = []
+                result["needs_regeneration"] = False
+                result["ok"] = True
+
             if keep_time >= duration - 0.1:
                 # 整个视频都稳定，不需要裁剪
                 logger.debug(f"质量检测: 视频质量正常，无需处理")
+                # 保存首尾帧作为审查参考
+                if audit_dir:
+                    AssetGenerator._save_audit_frames(frames, fps, audit_dir, attempt, keep_time, duration, diffs, threshold)
                 return result
 
-            if keep_time >= min_keep:
+            if result["cut_segments"]:
+                result["ok"] = True
+                result["trim_to"] = None
+                logger.info(f"质量检测: 检测到可局部裁剪片段 {result['cut_segments']}")
+            elif keep_time >= min_keep:
                 # 可以裁剪保留前面的好内容
                 result["trim_to"] = keep_time
                 result["ok"] = True
+                if result["trigger"] == "passed":
+                    result["trigger"] = "reverse_mse_tail"
                 logger.info(
                     f"质量检测: 发现异常帧，裁剪到 {keep_time:.1f}s "
                     f"({duration:.1f}s → {keep_time:.1f}s, "
-                    f"median={median_diff:.0f}, threshold={threshold:.0f})"
+                    f"median={median_diff:.0f}, threshold={threshold:.0f}, profile={profile_name}, trigger={result['trigger']})"
                 )
             else:
                 # 裁完太短，需要重新生成
                 result["needs_regeneration"] = True
                 result["ok"] = False
+                if result["trigger"] == "passed":
+                    result["trigger"] = "reverse_mse_tail"
                 logger.warning(
                     f"质量检测: 异常帧过多，稳定内容仅 {keep_time:.1f}s (< {min_keep}s)，需重新生成 "
-                    f"(median={median_diff:.0f}, threshold={threshold:.0f})"
+                    f"(median={median_diff:.0f}, threshold={threshold:.0f}, profile={profile_name}, trigger={result['trigger']})"
                 )
 
+            # 保存问题帧截图和稳定帧对比
+            if audit_dir:
+                AssetGenerator._save_audit_frames(frames, fps, audit_dir, attempt, keep_time, duration, diffs, threshold)
+
             return result
+
+    @staticmethod
+    def _face_crop_duplicate_score(face_a: Any, face_b: Any) -> float:
+        try:
+            import cv2
+            gray_a = cv2.cvtColor(face_a, cv2.COLOR_BGR2GRAY)
+            gray_b = cv2.cvtColor(face_b, cv2.COLOR_BGR2GRAY)
+            gray_a = cv2.resize(gray_a, (32, 32))
+            gray_b = cv2.resize(gray_b, (32, 32))
+            diff = cv2.absdiff(gray_a, gray_b)
+            mean_diff = float(diff.mean())
+            return max(0.0, 1.0 - mean_diff / 255.0)
+        except Exception:
+            return 0.0
+
+    @staticmethod
+    def _face_crop_identity_score(face_a: Any, face_b: Any) -> float:
+        try:
+            import cv2
+            gray_a = cv2.cvtColor(face_a, cv2.COLOR_BGR2GRAY)
+            gray_b = cv2.cvtColor(face_b, cv2.COLOR_BGR2GRAY)
+            gray_a = cv2.resize(gray_a, (48, 48))
+            gray_b = cv2.resize(gray_b, (48, 48))
+            diff = cv2.absdiff(gray_a, gray_b)
+            gray_score = max(0.0, 1.0 - float(diff.mean()) / 255.0)
+
+            hist_a = cv2.calcHist([cv2.resize(face_a, (64, 64))], [0, 1, 2], None, [8, 8, 8], [0, 256, 0, 256, 0, 256])
+            hist_b = cv2.calcHist([cv2.resize(face_b, (64, 64))], [0, 1, 2], None, [8, 8, 8], [0, 256, 0, 256, 0, 256])
+            cv2.normalize(hist_a, hist_a)
+            cv2.normalize(hist_b, hist_b)
+            hist_score = float(cv2.compareHist(hist_a, hist_b, cv2.HISTCMP_CORREL))
+            hist_score = max(0.0, min(1.0, (hist_score + 1.0) / 2.0))
+            return 0.6 * gray_score + 0.4 * hist_score
+        except Exception:
+            return 0.0
+
+    @staticmethod
+    def _box_iou(box_a: tuple[int, int, int, int], box_b: tuple[int, int, int, int]) -> float:
+        ax1, ay1, ax2, ay2 = box_a
+        bx1, by1, bx2, by2 = box_b
+        inter_x1 = max(ax1, bx1)
+        inter_y1 = max(ay1, by1)
+        inter_x2 = min(ax2, bx2)
+        inter_y2 = min(ay2, by2)
+        if inter_x2 <= inter_x1 or inter_y2 <= inter_y1:
+            return 0.0
+        inter_area = float((inter_x2 - inter_x1) * (inter_y2 - inter_y1))
+        area_a = float(max(1, (ax2 - ax1) * (ay2 - ay1)))
+        area_b = float(max(1, (bx2 - bx1) * (by2 - by1)))
+        return inter_area / (area_a + area_b - inter_area)
+
+    @staticmethod
+    def _dedupe_boxes(
+        boxes: list[tuple[int, int, int, int, float]],
+        iou_threshold: float = 0.45,
+    ) -> list[tuple[int, int, int, int, float]]:
+        if not boxes:
+            return []
+        ordered = sorted(boxes, key=lambda item: (item[4], (item[2] - item[0]) * (item[3] - item[1])), reverse=True)
+        kept: list[tuple[int, int, int, int, float]] = []
+        for candidate in ordered:
+            candidate_box = candidate[:4]
+            if any(AssetGenerator._box_iou(candidate_box, existing[:4]) >= iou_threshold for existing in kept):
+                continue
+            kept.append(candidate)
+        return kept
+
+    @staticmethod
+    def _merge_segments(segments: list[dict[str, Any]], gap_tolerance: float = 0.35) -> list[dict[str, Any]]:
+        if not segments:
+            return []
+        segments = sorted(segments, key=lambda item: (item["reason"], item["start"]))
+        merged: list[dict[str, Any]] = [dict(segments[0])]
+        for segment in segments[1:]:
+            current = merged[-1]
+            if (
+                segment["reason"] == current["reason"]
+                and float(segment["start"]) <= float(current["end"]) + gap_tolerance
+            ):
+                current["end"] = max(float(current["end"]), float(segment["end"]))
+                current["confidence"] = max(float(current.get("confidence", 0.0)), float(segment.get("confidence", 0.0)))
+            else:
+                merged.append(dict(segment))
+        return merged
+
+    @staticmethod
+    def _semantic_audit_video(
+        video_path: Path,
+        fps: float,
+        duration: float,
+        expected_character_count: int = 0,
+        expected_subject_facing: str = "",
+    ) -> list[dict[str, Any]]:
+        try:
+            import cv2
+        except ImportError:
+            return []
+
+        model_dir = Path(__file__).parent.parent / "models"
+        proto = model_dir / "deploy.prototxt"
+        weights = model_dir / "res10_300x300_ssd_iter_140000.caffemodel"
+        if not (proto.exists() and weights.exists()):
+            return []
+
+        try:
+            net = cv2.dnn.readNetFromCaffe(str(proto), str(weights))
+            frontal = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+            profile = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_profileface.xml")
+        except Exception:
+            return []
+
+        sample_interval = max(3, int(round(fps / 8)))
+        stable_expected_facing = str(expected_subject_facing).strip().lower()
+        frontal_expected = stable_expected_facing in {"toward_camera", "front", "front_of_subject"}
+        left_expected = stable_expected_facing == "left_profile"
+        right_expected = stable_expected_facing == "right_profile"
+        orientation_states: list[tuple[float, str, int]] = []
+        drift_samples: list[tuple[float, float, tuple[float, float, float, float] | None, str]] = []
+        bad_segments: list[dict[str, Any]] = []
+
+        with tempfile.TemporaryDirectory() as face_td:
+            try:
+                subprocess.run(
+                    ["ffmpeg", "-i", str(video_path), "-vf", "scale=480:-1", f"{face_td}/f%05d.png", "-loglevel", "error"],
+                    check=True,
+                )
+            except Exception:
+                return []
+
+            person_hog = cv2.HOGDescriptor()
+            person_hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+            anchor_face = None
+            anchor_box = None
+
+            face_frames = sorted(Path(face_td).glob("f*.png"))
+            for fi, ff in enumerate(face_frames):
+                if fi % sample_interval != 0:
+                    continue
+                img = cv2.imread(str(ff))
+                if img is None:
+                    continue
+                h, w = img.shape[:2]
+                blob = cv2.dnn.blobFromImage(img, 1.0, (300, 300), (104.0, 177.0, 123.0))
+                net.setInput(blob)
+                detections = net.forward()
+                faces: list[tuple[int, int, int, int, float]] = []
+                for di in range(detections.shape[2]):
+                    conf = float(detections[0, 0, di, 2])
+                    if conf < 0.5:
+                        continue
+                    box = detections[0, 0, di, 3:7] * [w, h, w, h]
+                    x1, y1, x2, y2 = [int(v) for v in box]
+                    x1 = max(0, min(x1, w - 1))
+                    x2 = max(0, min(x2, w))
+                    y1 = max(0, min(y1, h - 1))
+                    y2 = max(0, min(y2, h))
+                    if x2 - x1 < 20 or y2 - y1 < 20:
+                        continue
+                    faces.append((x1, y1, x2, y2, conf))
+                face_candidates = list(faces)
+
+                sample_time = fi / fps
+                person_boxes, weights = person_hog.detectMultiScale(img, winStride=(4, 4), padding=(16, 16), scale=1.02)
+                # 过滤低权重的误报
+                person_boxes = [box for box, w in zip(person_boxes, weights) if w > 0.15]
+                person_box = None
+                if len(person_boxes) > 0:
+                    px, py, pw, ph = max(person_boxes, key=lambda box: box[2] * box[3])
+                    person_box = (float(px), float(py), float(px + pw), float(py + ph))
+
+                # 检测重复人体（基于 HOG）
+                # 只要检测到多个相似人体，就标记为风险，交给视觉层判断
+                if len(person_boxes) >= 2:
+                    logger.debug(f"[{sample_time:.2f}s] HOG detected {len(person_boxes)} persons (expected {expected_character_count})")
+                    duplicate_person_score = 0.0
+                    for idx in range(len(person_boxes)):
+                        px1, py1, pw1, ph1 = person_boxes[idx]
+                        crop_a = img[py1:py1+ph1, px1:px1+pw1]
+                        for jdx in range(idx + 1, len(person_boxes)):
+                            px2, py2, pw2, ph2 = person_boxes[jdx]
+                            crop_b = img[py2:py2+ph2, px2:px2+pw2]
+                            if crop_a.size > 0 and crop_b.size > 0:
+                                score = AssetGenerator._face_crop_identity_score(crop_a, crop_b)
+                                duplicate_person_score = max(duplicate_person_score, score)
+                                logger.debug(f"[{sample_time:.2f}s] Person {idx} vs {jdx}: similarity={score:.3f}")
+                    if duplicate_person_score >= 0.70:
+                        bad_segments.append({
+                            "start": sample_time,
+                            "end": min(duration, sample_time + sample_interval / fps),
+                            "reason": "identity_hallucination",
+                            "confidence": duplicate_person_score,
+                        })
+                        logger.debug(f"[{sample_time:.2f}s] Duplicate person detected: score={duplicate_person_score:.3f}")
+
+                if expected_character_count > 0 and len(faces) > expected_character_count:
+                    duplicate_score = 0.0
+                    for idx in range(len(faces)):
+                        x1, y1, x2, y2, _ = faces[idx]
+                        crop_a = img[y1:y2, x1:x2]
+                        for jdx in range(idx + 1, len(faces)):
+                            xx1, yy1, xx2, yy2, _ = faces[jdx]
+                            crop_b = img[yy1:yy2, xx1:xx2]
+                            duplicate_score = max(duplicate_score, AssetGenerator._face_crop_duplicate_score(crop_a, crop_b))
+                    if duplicate_score >= 0.88:
+                        bad_segments.append(
+                            {
+                                "start": sample_time,
+                                "end": min(duration, sample_time + sample_interval / fps),
+                                "reason": "identity_hallucination",
+                                "confidence": duplicate_score,
+                            }
+                        )
+
+                if faces:
+                    x1, y1, x2, y2, conf = max(faces, key=lambda item: (item[4], (item[2] - item[0]) * (item[3] - item[1])))
+                    primary_crop = img[y1:y2, x1:x2]
+                    if primary_crop.size > 0:
+                        if anchor_face is None and (x2 - x1) >= 36 and (y2 - y1) >= 36:
+                            anchor_face = primary_crop.copy()
+                            anchor_box = (float(x1), float(y1), float(x2), float(y2))
+                        if anchor_face is not None:
+                            identity_score = AssetGenerator._face_crop_identity_score(anchor_face, primary_crop)
+                            drift_samples.append((sample_time, identity_score, person_box, "face"))
+
+                if frontal_expected or left_expected or right_expected:
+                    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                    frontal_hits = frontal.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4, minSize=(30, 30))
+                    left_hits = profile.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4, minSize=(30, 30))
+                    flipped = cv2.flip(gray, 1)
+                    right_hits = profile.detectMultiScale(flipped, scaleFactor=1.1, minNeighbors=4, minSize=(30, 30))
+                    logger.debug(f"[{sample_time:.2f}s] Haar: frontal={len(frontal_hits)}, left={len(left_hits)}, right={len(right_hits)}")
+                    for x, y, ww, hh in frontal_hits:
+                        face_candidates.append((int(x), int(y), int(x + ww), int(y + hh), 0.55))
+                    for x, y, ww, hh in left_hits:
+                        face_candidates.append((int(x), int(y), int(x + ww), int(y + hh), 0.5))
+                    for x, y, ww, hh in right_hits:
+                        x1 = int(w - (x + ww))
+                        x2 = int(w - x)
+                        face_candidates.append((x1, int(y), x2, int(y + hh), 0.5))
+                    logger.debug(f"[{sample_time:.2f}s] face_candidates before dedupe: {len(face_candidates)}")
+
+                    observed = "unknown"
+                    if len(frontal_hits) > 0:
+                        observed = "frontal"
+                    elif len(left_hits) > 0 and len(right_hits) == 0:
+                        observed = "left"
+                    elif len(right_hits) > 0 and len(left_hits) == 0:
+                        observed = "right"
+                    orientation_states.append((sample_time, observed, len(faces)))
+
+                deduped_candidates = AssetGenerator._dedupe_boxes(face_candidates)
+                # 注释掉基于候选框的重复检测，因为 Haar cascade 误报太多
+                # 只保留 HOG 人体检测和原有的人脸重复检测
+
+        if drift_samples:
+            low_run = 0
+            run_start = None
+            recent_boxes: list[tuple[float, float, float, float] | None] = []
+            last_identity = None
+            for sample_time, identity_score, person_box, _ in drift_samples:
+                recent_boxes.append(person_box)
+                recent_boxes = recent_boxes[-3:]
+                if last_identity is not None and identity_score < 0.58 and last_identity < 0.7:
+                    if low_run == 0:
+                        run_start = sample_time
+                    low_run += 1
+                else:
+                    if low_run >= 2 and run_start is not None:
+                        bad_segments.append(
+                            {
+                                "start": max(0.0, run_start - sample_interval / fps),
+                                "end": sample_time,
+                                "reason": "face_identity_drift",
+                                "confidence": 0.9 - identity_score * 0.2,
+                            }
+                        )
+                    low_run = 0
+                    run_start = None
+                last_identity = identity_score
+
+        if orientation_states and (frontal_expected or left_expected or right_expected):
+            dominant = "frontal" if frontal_expected else "left" if left_expected else "right"
+            mismatch_run = 0
+            run_start = None
+            last_state = None
+            flip_count = 0
+            for sample_time, observed, face_count in orientation_states:
+                if face_count == 0 or observed == "unknown":
+                    continue
+                if observed != dominant:
+                    if mismatch_run == 0:
+                        run_start = sample_time
+                        flip_count = 0
+                    if last_state and observed != last_state:
+                        flip_count += 1
+                    mismatch_run += 1
+                else:
+                    if mismatch_run >= 2 and flip_count >= 1 and run_start is not None:
+                        bad_segments.append(
+                            {
+                                "start": max(0.0, run_start - sample_interval / fps),
+                                "end": sample_time,
+                                "reason": "face_orientation_discontinuity",
+                                "confidence": 0.85,
+                            }
+                        )
+                    mismatch_run = 0
+                    run_start = None
+                    flip_count = 0
+                last_state = observed
+            if mismatch_run >= 2 and flip_count >= 1 and run_start is not None:
+                bad_segments.append(
+                    {
+                        "start": max(0.0, run_start - sample_interval / fps),
+                        "end": min(duration, run_start + mismatch_run * sample_interval / fps),
+                        "reason": "face_orientation_discontinuity",
+                        "confidence": 0.85,
+                    }
+                )
+
+        if orientation_states and drift_samples:
+            orientation_map = {round(sample_time, 2): observed for sample_time, observed, face_count in orientation_states if face_count > 0}
+            jump_run = 0
+            run_start = None
+            last_orientation = None
+            for sample_time, identity_score, person_box, _ in drift_samples:
+                observed = orientation_map.get(round(sample_time, 2), "unknown")
+                if observed == "unknown":
+                    continue
+                if last_orientation and observed != last_orientation and identity_score < 0.62:
+                    if jump_run == 0:
+                        run_start = sample_time
+                    jump_run += 1
+                else:
+                    if jump_run >= 2 and run_start is not None:
+                        bad_segments.append(
+                            {
+                                "start": max(0.0, run_start - sample_interval / fps),
+                                "end": sample_time,
+                                "reason": "head_body_inconsistency",
+                                "confidence": 0.82,
+                            }
+                        )
+                    jump_run = 0
+                    run_start = None
+                last_orientation = observed
+
+        return AssetGenerator._merge_segments(bad_segments)
+
+    @staticmethod
+    def _save_audit_frames(
+        frames: list,
+        fps: float,
+        audit_dir: Path,
+        attempt: int,
+        keep_time: float,
+        duration: float,
+        diffs: list[float],
+        threshold: float,
+    ) -> None:
+        """保存质量检测的关键帧截图，供人工审查。"""
+        try:
+            prefix = f"attempt_{attempt}"
+
+            # 保存首帧
+            if frames:
+                frames[0].save(audit_dir / f"{prefix}_first_frame.png")
+
+            # 保存最后一个好帧（裁剪点）
+            trim_frame_idx = min(int(keep_time * fps), len(frames) - 1)
+            if trim_frame_idx > 0 and trim_frame_idx < len(frames):
+                frames[trim_frame_idx].save(audit_dir / f"{prefix}_trim_point_{keep_time:.1f}s.png")
+
+            # 保存裁剪点后的第一个坏帧
+            bad_frame_idx = min(trim_frame_idx + 1, len(frames) - 1)
+            if bad_frame_idx < len(frames) and bad_frame_idx != trim_frame_idx:
+                frames[bad_frame_idx].save(audit_dir / f"{prefix}_first_bad_frame_{bad_frame_idx / fps:.1f}s.png")
+
+            # 保存尾帧
+            if len(frames) > 1:
+                frames[-1].save(audit_dir / f"{prefix}_last_frame.png")
+
+            # 保存 MSE 最高的帧（最严重的问题帧）
+            if diffs:
+                worst_idx = max(range(len(diffs)), key=lambda i: diffs[i])
+                worst_time = (worst_idx + 1) / fps
+                if worst_idx + 1 < len(frames):
+                    frames[worst_idx + 1].save(
+                        audit_dir / f"{prefix}_worst_frame_{worst_time:.1f}s_mse{diffs[worst_idx]:.0f}.png"
+                    )
+
+            logger.info(f"质量审查: 关键帧截图已保存 → {audit_dir}/{prefix}_*.png")
+        except Exception as e:
+            logger.debug(f"质量审查: 截图保存失败 ({e})")
 
     @staticmethod
     def _trim_video_at(video_path: Path, end_time: float, min_remaining: float = 3.0) -> Path:
@@ -597,6 +1433,162 @@ class AssetGenerator:
             logger.warning(f"裁剪失败: {e}")
             trimmed_path.unlink(missing_ok=True)
             return video_path
+
+    @staticmethod
+    def _remove_video_segments(video_path: Path, segments: list[dict[str, Any]], min_remaining: float = 3.0) -> Path:
+        if len(segments) != 1:
+            logger.warning("局部裁剪: 当前仅支持单个问题片段")
+            return video_path
+        segment = segments[0]
+        start_time = float(segment["start"])
+        end_time = float(segment["end"])
+        if end_time <= start_time:
+            return video_path
+
+        try:
+            probe = subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(video_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            duration = float(probe.stdout.strip())
+        except Exception:
+            return video_path
+
+        remaining = duration - (end_time - start_time)
+        if remaining < min_remaining:
+            logger.warning("局部裁剪: 剩余时长过短，跳过")
+            return video_path
+
+        edited_path = video_path.with_suffix(".edited.mp4")
+        filter_complex = (
+            f"[0:v]trim=start=0:end={start_time},setpts=PTS-STARTPTS[v0];"
+            f"[0:v]trim=start={end_time}:end={duration},setpts=PTS-STARTPTS[v1];"
+            f"[v0][v1]concat=n=2:v=1:a=0[v]"
+        )
+        try:
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-i",
+                    str(video_path),
+                    "-filter_complex",
+                    filter_complex,
+                    "-map",
+                    "[v]",
+                    str(edited_path),
+                ],
+                check=True,
+                capture_output=True,
+                timeout=60,
+            )
+            edited_path.replace(video_path)
+            logger.info(f"局部裁剪完成: 删除片段 {start_time:.1f}s-{end_time:.1f}s")
+            return video_path
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            logger.warning(f"局部裁剪失败: {e}")
+            edited_path.unlink(missing_ok=True)
+            return video_path
+
+    @staticmethod
+    def _extract_segment_frames(
+        video_path: Path,
+        output_dir: Path,
+        segment: dict[str, Any],
+        max_frames: int = 5,
+    ) -> list[str]:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        start = float(segment.get("start", 0.0))
+        end = float(segment.get("end", start + 1.0))
+        if end <= start:
+            end = start + 1.0
+        frame_times = []
+        if max_frames <= 1:
+            frame_times = [start]
+        else:
+            step = (end - start) / max_frames
+            frame_times = [start + idx * step for idx in range(max_frames)]
+        extracted: list[str] = []
+        for idx, ts in enumerate(frame_times, start=1):
+            frame_path = output_dir / f"frame_{idx:02d}_{ts:.2f}s.png"
+            try:
+                subprocess.run(
+                    ["ffmpeg", "-y", "-ss", str(ts), "-i", str(video_path), "-frames:v", "1", "-q:v", "2", str(frame_path)],
+                    check=True,
+                    capture_output=True,
+                    timeout=30,
+                )
+                if frame_path.exists():
+                    extracted.append(str(frame_path))
+            except Exception:
+                frame_path.unlink(missing_ok=True)
+        return extracted
+
+    def _export_risk_bundle(
+        self,
+        video_path: Path,
+        audit_dir: Path,
+        attempt: int,
+        quality: dict[str, Any],
+        shot: dict[str, Any],
+    ) -> None:
+        review_cfg = self._review_config()
+        if not bool(review_cfg.get("export_risk_bundle", False)):
+            return
+        max_frames = int(get_model_config("vision_judge").get("max_frames_per_segment", 5))
+        bundle_dir = audit_dir / f"vision_bundle_attempt_{attempt}"
+        bundle_dir.mkdir(parents=True, exist_ok=True)
+        segments = quality.get("risk_segments", [])
+        segment_payload = []
+        for idx, segment in enumerate(segments, start=1):
+            segment_dir = bundle_dir / f"segment_{idx:02d}"
+            frames = self._extract_segment_frames(video_path, segment_dir, segment, max_frames=max_frames)
+            segment_payload.append(
+                {
+                    "segment": segment,
+                    "frames": frames,
+                }
+            )
+        prompt_payload = {
+            "shot_id": shot.get("id"),
+            "review_mode": self.review_mode,
+            "camera_movement": shot.get("camera_movement", ""),
+            "motion_control": shot.get("motion_control", {}),
+            "characters_in_shot": shot.get("characters_in_shot", []),
+            "risk_segments": segment_payload,
+            "judge_questions": [
+                "Does the character identity drift or deform in this segment?",
+                "Are there duplicate or hallucinated repeated characters?",
+                "Does the head orientation contradict the body motion or continuity?",
+                "Should this segment be kept, cut, or should the whole shot be regenerated?",
+            ],
+        }
+        write_json(bundle_dir / "vision_judge_request.json", prompt_payload)
+
+        # 自动调用 vision_judge（默认不使用外部 API）
+        use_external_api = bool(get_model_config("vision_judge").get("use_external_api", False))
+        judge_result_path = bundle_dir / "vision_judge_result.json"
+        judge_script = Path(__file__).parent / "vision_judge.py"
+        cmd = [
+            sys.executable,
+            str(judge_script),
+            "--request", str(bundle_dir / "vision_judge_request.json"),
+            "--output", str(judge_result_path),
+        ]
+        if use_external_api:
+            cmd.append("--use-api")
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, text=True)
+            if use_external_api:
+                logger.info(f"Vision judge completed: {judge_result_path}")
+            else:
+                logger.info(f"Vision bundle exported, waiting for manual judgment: {bundle_dir}")
+        except subprocess.CalledProcessError as e:
+            logger.warning(f"Vision judge failed: {e.stderr}")
+        except Exception as e:
+            logger.warning(f"Vision judge error: {e}")
 
     def _get_character_appearances(self, characters_in_shot: list[str]) -> list[tuple[str, str]]:
         """从 storyboard.characters 读取角色外貌（单一真相源）。"""
@@ -854,6 +1846,7 @@ class AssetGenerator:
         scene_context: dict[str, Any] | None = None,
         extracted_prompts: dict[int, dict[str, str]] | None = None,
         is_last_in_scene: bool = True,
+        continuity_mode: str = "scene_end",
     ) -> dict[str, Any]:
         """生成单镜头素材。
 
@@ -861,7 +1854,8 @@ class AssetGenerator:
             provided_first_frame: 上一镜头的尾帧图路径，直接复用为本镜头首帧。
             scene_context: 场景层级环境上下文（lighting, weather, props, environment_description）。
             extracted_prompts: 全局提取的 prompt dict {shot_id: {first_frame_prompt, last_frame_prompt, video_action_prompt}}。
-            is_last_in_scene: 是否为 scene 最后一个 shot。只有 scene 末尾才生成尾帧图约束终点。
+            is_last_in_scene: 是否为 scene 最后一个 shot。
+            continuity_mode: 连续性模式 - "strict"(强约束尾帧) / "scene_end"(仅scene末尾) / "free"(自由运动)。
         """
         if scene_context is None:
             scene_context = {}
@@ -875,6 +1869,7 @@ class AssetGenerator:
         estimated_duration = int(shot.get("estimated_duration", 10))
         characters_in_shot = shot.get("characters_in_shot", [])
         consistency_anchors = shot.get("consistency_anchors")
+        motion_control = shot.get("motion_control")
 
         # 6D 增强字段
         camera_move = str(shot.get("camera_movement", ""))
@@ -902,6 +1897,7 @@ class AssetGenerator:
             style_anchor=style_anchor,
             character_appearances=char_appearances,
             scene_description=first_frame_text,  # 全局提取的首帧视觉描述
+            motion_control=motion_control,
             camera_technical=camera_tech,
             atmosphere=atmosphere,
             physics=physics,
@@ -929,14 +1925,78 @@ class AssetGenerator:
                     scene_image=scene_image,
                 )
 
-        # ── 尾帧图（只有 scene 末尾 shot 才生成，作为终点锚） ──
+        keyframe_results: list[dict[str, Any]] = []
+        should_generate_end_frame = (
+            continuity_mode == "strict"
+            or (continuity_mode == "scene_end" and is_last_in_scene)
+        )
+        if continuity_mode != "free" and self._any_video_provider_supports_keyframes():
+            keyframes = shot.get("keyframes", [])
+            max_refs = self._max_video_reference_images()
+            available_slots = max_refs - 1  # first_frame
+            if should_generate_end_frame:
+                available_slots -= 1  # last_frame
+            available_slots = max(0, available_slots)
+            if len(keyframes) > available_slots:
+                logger.info(
+                    f"shot_{shot_id}: keyframes {len(keyframes)} 超出参考图限制，"
+                    f"仅保留前 {available_slots} 个"
+                )
+            for idx, keyframe in enumerate(keyframes[:available_slots]):
+                if not isinstance(keyframe, dict):
+                    continue
+                keyframe_description = str(keyframe.get("description", "")).strip()
+                if not keyframe_description:
+                    continue
+                keyframe_timestamp = float(keyframe.get("timestamp", 0))
+                keyframe_prompt = VideoPromptBuilder.build_image_prompt(
+                    style_anchor=style_anchor,
+                    character_appearances=char_appearances,
+                    scene_description=keyframe_description,
+                    motion_control=motion_control,
+                    camera_technical=camera_tech,
+                    atmosphere=atmosphere,
+                    physics=physics,
+                    consistency_anchors=consistency_anchors,
+                    scene_environment=scene_context.get("environment_description", ""),
+                    scene_lighting=scene_context.get("lighting", ""),
+                    scene_weather=scene_context.get("weather", ""),
+                    scene_props=scene_context.get("props"),
+                )
+                timestamp_slug = str(keyframe_timestamp).replace(".", "_")
+                keyframe_out = self.image_dir / f"shot_{shot_id:03d}_keyframe_{idx + 1}_{timestamp_slug}s.png"
+                async with self.sem:
+                    keyframe_path, keyframe_provider = await self._generate_image(
+                        keyframe_prompt,
+                        shot_id,
+                        output_path=keyframe_out,
+                        characters_in_shot=characters_in_shot,
+                        scene_image=scene_image,
+                    )
+                keyframe_results.append(
+                    {
+                        "index": idx + 1,
+                        "timestamp": keyframe_timestamp,
+                        "description": keyframe_description,
+                        "path": str(keyframe_path),
+                        "provider": keyframe_provider,
+                    }
+                )
+            if keyframe_results:
+                logger.info(f"shot_{shot_id}: 已生成 {len(keyframe_results)} 张中间关键帧参考图")
+
+        # ── 尾帧图（根据 continuity_mode 决定是否生成） ──
+        # strict: 强制生成尾帧图（LLM 判断为关键镜头）
+        # scene_end: 仅 scene 末尾 shot 生成（默认行为）
+        # free: 不生成尾帧图，Seedance 自由运动
         end_frame_path: Path | None = None
         end_frame_provider = ""
-        if is_last_in_scene and last_frame_text:
+        if should_generate_end_frame and last_frame_text:
             end_prompt = VideoPromptBuilder.build_image_prompt(
                 style_anchor=style_anchor,
                 character_appearances=char_appearances,
                 scene_description=last_frame_text,  # 全局提取的尾帧视觉描述
+                motion_control=motion_control,
                 camera_technical=camera_tech,
                 atmosphere=atmosphere,
                 physics=physics,
@@ -953,14 +2013,20 @@ class AssetGenerator:
                     characters_in_shot=characters_in_shot,
                     scene_image=scene_image,
                 )
-            logger.info(f"shot_{shot_id}: scene 末尾，生成尾帧图作为终点锚")
+            if continuity_mode == "strict":
+                logger.info(f"shot_{shot_id}: continuity_mode=strict，生成尾帧图作为终点锚")
+            else:
+                logger.info(f"shot_{shot_id}: scene 末尾，生成尾帧图作为终点锚")
+        elif continuity_mode == "free":
+            logger.info(f"shot_{shot_id}: continuity_mode=free，跳过尾帧图生成，Seedance 自由运动")
         elif not is_last_in_scene:
-            logger.info(f"shot_{shot_id}: 非 scene 末尾，跳过尾帧图生成，Seedance 自由运动")
+            logger.info(f"shot_{shot_id}: 非 scene 末尾（continuity_mode=scene_end），跳过尾帧图生成")
 
         # ── 构建结构化视频 prompt（使用全局提取的 video_action_prompt） ──
         video_prompt = VideoPromptBuilder.build_video_prompt(
             character_appearances=char_appearances,
             action_description=video_action_text,
+            motion_control=motion_control,
             camera_movement=camera_move,
             consistency_anchors=consistency_anchors,
             narration=narration,
@@ -971,12 +2037,30 @@ class AssetGenerator:
         result = {
             "image": {"shot_id": shot_id, "path": str(image_path), "provider": image_provider},
         }
+        if keyframe_results:
+            result["keyframes"] = keyframe_results
 
         if self.use_api and image_path.exists():
+            reference_images: list[dict[str, Any]] = [{"path": image_path, "role": "first_frame"}]
+            for idx, item in enumerate(keyframe_results, start=2):
+                keyframe_path = Path(item["path"])
+                if keyframe_path.exists():
+                    reference_images.append(
+                        {
+                            "path": keyframe_path,
+                            "role": "keyframe",
+                            "mention": f"@Image{idx}",
+                            "timestamp": item["timestamp"],
+                        }
+                    )
+            if end_frame_path and end_frame_path.exists():
+                reference_images.append({"path": end_frame_path, "role": "last_frame"})
+
             video_path, video_provider = await self._generate_video(
                 image_path, video_prompt, shot_id,
                 estimated_duration=estimated_duration,
                 last_frame_path=end_frame_path,
+                reference_images=reference_images,
             )
             if video_path:
                 result["video"] = {
@@ -997,6 +2081,7 @@ class AssetGenerator:
         self, image_path: Path, prompt: str, shot_id: int,
         estimated_duration: int = 10,
         last_frame_path: Path | None = None,
+        reference_images: list[dict[str, Any]] | None = None,
     ) -> tuple[Path | None, str]:
         """图生视频：dispatch + fallback_chain 模式。"""
         out = self.video_dir / f"shot_{shot_id:03d}.mp4"
@@ -1014,8 +2099,8 @@ class AssetGenerator:
             retry_delay = video_cfg.get("retry_delay", 5)
 
         dispatch = {
-            "byteplus": lambda img, p, o, dur, lf: self._video_seedance(
-                img, p, o, duration=dur, last_frame_path=lf
+            "byteplus": lambda img, p, o, dur, lf, refs: self._video_seedance(
+                img, p, o, duration=dur, last_frame_path=lf, reference_images=refs
             ),
         }
 
@@ -1036,8 +2121,26 @@ class AssetGenerator:
             clamped = max(min_dur, min(max_dur, estimated_duration))
             logger.info(f"shot_{shot_id}: estimated_duration={estimated_duration}s → clamped={clamped}s (provider={provider})")
 
+            provider_references = list(reference_images or [])
+            if not provider_references:
+                provider_references = [{"path": image_path, "role": "first_frame"}]
+                if last_frame_path and last_frame_path.exists():
+                    provider_references.append({"path": last_frame_path, "role": "last_frame"})
+
+            supports_keyframes = bool(pcfg.get("supports_keyframes", False))
+            max_refs = int(pcfg.get("max_reference_images", 2))
+            if not supports_keyframes:
+                provider_references = [ref for ref in provider_references if ref.get("role") != "keyframe"]
+            if max_refs > 0 and len(provider_references) > max_refs:
+                first_refs = [ref for ref in provider_references if ref.get("role") == "first_frame"][:1]
+                last_refs = [ref for ref in provider_references if ref.get("role") == "last_frame"][:1]
+                mid_limit = max(0, max_refs - len(first_refs) - len(last_refs))
+                key_refs = [ref for ref in provider_references if ref.get("role") == "keyframe"][:mid_limit]
+                provider_references = first_refs + key_refs + last_refs
+                logger.info(f"shot_{shot_id}: {provider} 参考图超限，截断为 {len(provider_references)} 张")
+
             for attempt in range(max_retries):
-                if await fn(image_path, prompt, out, clamped, last_frame_path):
+                if await fn(image_path, prompt, out, clamped, last_frame_path, provider_references):
                     return out, provider
                 if attempt < max_retries - 1:
                     logger.warning(f"shot_{shot_id}: {provider} 第 {attempt+1} 次失败，{retry_delay}s 后重试")
@@ -1047,7 +2150,15 @@ class AssetGenerator:
         logger.warning(f"视频生成失败 shot_{shot_id}，将使用静态图 fallback")
         return None, "none"
 
-    async def _video_seedance(self, image_path: Path, prompt: str, output: Path, duration: int = 10, last_frame_path: Path | None = None) -> bool:
+    async def _video_seedance(
+        self,
+        image_path: Path,
+        prompt: str,
+        output: Path,
+        duration: int = 10,
+        last_frame_path: Path | None = None,
+        reference_images: list[dict[str, Any]] | None = None,
+    ) -> bool:
         """BytePlus Seedance I2V（图生视频），支持 batch 模式和 per-provider 配置。"""
         video_cfg = get_model_config("video")
         # Per-provider config: 新格式用 video_cfg["byteplus"]，旧格式用 video_cfg 自身
@@ -1064,12 +2175,6 @@ class AssetGenerator:
         # narration 已在 VideoPromptBuilder.build_video_prompt() 中拼入 prompt
 
         try:
-            # 图片转 base64 data URL
-            import mimetypes
-            mime = mimetypes.guess_type(str(image_path))[0] or "image/png"
-            img_b64 = base64.b64encode(image_path.read_bytes()).decode()
-            data_url = f"data:{mime};base64,{img_b64}"
-
             api_base = creds["api_base"]
             api_key = creds["api_key"]
 
@@ -1080,17 +2185,40 @@ class AssetGenerator:
             if batch_mode:
                 logger.info(f"Seedance batch mode: {raw_model} → {model}")
 
-            # 构建 content 数组：首帧 + (尾帧) + prompt
-            content = [
-                {"type": "image_url", "image_url": {"url": data_url}, "role": "first_frame"},
-                {"type": "text", "text": prompt},
+            refs = list(reference_images or [])
+            if not refs:
+                refs = [{"path": image_path, "role": "first_frame"}]
+                if last_frame_path and last_frame_path.exists():
+                    refs.append({"path": last_frame_path, "role": "last_frame"})
+
+            mentions = [
+                str(ref.get("mention", "")).strip()
+                for ref in refs
+                if ref.get("role") == "keyframe" and ref.get("mention")
             ]
-            if last_frame_path and last_frame_path.exists():
-                end_mime = mimetypes.guess_type(str(last_frame_path))[0] or "image/png"
-                end_b64 = base64.b64encode(last_frame_path.read_bytes()).decode()
-                end_data_url = f"data:{end_mime};base64,{end_b64}"
-                content.insert(1, {"type": "image_url", "image_url": {"url": end_data_url}, "role": "last_frame"})
-                logger.info("Seedance: 已添加 last_frame 约束")
+            final_prompt = prompt
+            if mentions:
+                final_prompt = f"Reference images: {', '.join(mentions)}. {prompt}"
+
+            content: list[dict[str, Any]] = []
+            for ref in refs:
+                ref_path = ref.get("path")
+                if not isinstance(ref_path, Path) or not ref_path.exists():
+                    continue
+                mime = mimetypes.guess_type(str(ref_path))[0] or "image/png"
+                img_b64 = base64.b64encode(ref_path.read_bytes()).decode()
+                data_url = f"data:{mime};base64,{img_b64}"
+                item: dict[str, Any] = {
+                    "type": "image_url",
+                    "image_url": {"url": data_url},
+                    "role": ref.get("role", "reference"),
+                }
+                if ref.get("mention"):
+                    item["mention"] = ref["mention"]
+                content.append(item)
+            content.append({"type": "text", "text": final_prompt})
+            roles = [str(ref.get("role", "reference")) for ref in refs]
+            logger.info(f"Seedance: 使用 {len(roles)} 张参考图 ({', '.join(roles)})")
 
             # 1) 提交任务
             payload = {
@@ -1148,9 +2276,11 @@ class AssetGenerator:
                             video_url = (result.get("content") or {}).get("video_url")
                             if video_url:
                                 logger.info(f"Seedance 生成成功，下载视频...")
-                                return await self._download(
-                                    session, video_url, output
-                                )
+                                # 用独立 session 下载视频，避免 poll_timeout 过短导致下载超时
+                                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=300)) as dl_session:
+                                    return await self._download(
+                                        dl_session, video_url, output
+                                    )
                             logger.warning("Seedance 成功但无 video_url")
                             return False
 
@@ -1757,6 +2887,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--image_width", type=int, default=1024, help="图片宽度")
     parser.add_argument("--image_height", type=int, default=1024, help="图片高度")
     parser.add_argument("--parallel", type=int, default=4, help="并行任务数")
+    parser.add_argument("--review_mode", choices=sorted(REVIEW_MODES), help="质量审查模式：metrics_only | hybrid_judge")
     parser.add_argument("--no_api", action="store_true", help="禁用外部 API，生成占位素材")
     parser.add_argument("--verbose", action="store_true", help="详细日志")
     return parser
@@ -1799,6 +2930,7 @@ async def _async_main(args: argparse.Namespace) -> None:
             image_height=args.image_height,
             parallel=args.parallel,
             use_api=not args.no_api,
+            review_mode=args.review_mode,
         )
         assets = await generator.run()
 
