@@ -1,9 +1,9 @@
 ---
-name: ad-generator
-description: "视频生成线 - 对话驱动的端到端视频生成。输入主题/故事，自动完成角色设计→剧本框架→分镜脚本→素材生成→视频合成。"
+name: xyz-video-skill
+description: "视频生成 skill。对话驱动的端到端视频生成流程：输入主题或故事，完成角色设计、剧本框架、分镜脚本、素材生成与视频合成。"
 ---
 
-# 视频生成线 Ad Generator
+# XYZ Video Skill
 
 ## 触发条件
 用户提到"生成视频"、"广告片"、"短片"、"商业视频"、"产品广告"、"做一个视频"等关键词。
@@ -196,7 +196,7 @@ narrative 的自然切分点：
 **这一步是视觉一致性的基石。** 在写分镜之前，必须先为每个角色生成参考图。
 
 ```bash
-cd /path/to/skills/ad-generator/scripts
+cd /path/to/skills/xyz-video-skill/scripts
 python3 ad_assets.py \
     --mode character_refs \
     --framework {output_dir}/framework.json \
@@ -270,6 +270,16 @@ python3 ad_assets.py --mode character_refs --framework framework.json --output_d
                     "subtitle": "",
                     "estimated_duration": 8,
                     "chain_from_previous": false,
+                    "continuity_mode": "scene_end",
+                    "motion_control": {
+                        "subject_facing": "away_from_camera",
+                        "camera_relation": "rear_three_quarter",
+                        "movement_direction": "upstairs",
+                        "screen_trajectory": "lower_right_to_upper_left",
+                        "target": "cave_entrance",
+                        "distance_to_target": "getting_closer",
+                        "phase_beats": ["at foot of stairs", "ascending halfway", "approaching cave entrance"]
+                    },
                     "transition_in": {"type": "cross-dissolve", "duration": 0.5},
                     "consistency_anchors": {
                         "characters": [
@@ -310,6 +320,57 @@ python3 ad_assets.py --mode character_refs --framework framework.json --output_d
 **Shot 的 narrative_segment 切分：** 每个 shot 从所属 scene 的 narrative_segment 中进一步切分出自己负责讲述的那段叙事。所有 shot 的 narrative_segment 合起来必须完整覆盖 scene 的 narrative_segment。
 
 **Shot 在 scene 中只写自己特有的内容：** 动作、姿态、构图、镜头参数。不需要重复环境/光线/天气描述。
+
+### 4.1.1 motion_control（结构控制层，人物运动镜头必填）
+
+`scene_prompt / action_prompt / end_frame_description` 负责讲清楚故事，但它们仍然是自然语言。为了避免“角色朝向错了”“明明是上楼却像下楼”“目标关系不明确”这类系统性问题，人物运动镜头必须额外填写 `motion_control`。
+
+**作用：** 把最容易被模型脑补错的空间关系、运动方向、时间阶段拆成结构化字段，作为 prompt builder 的硬约束输入。
+
+**格式：**
+
+```json
+"motion_control": {
+  "subject_facing": "away_from_camera",
+  "camera_relation": "rear_three_quarter",
+  "movement_direction": "upstairs",
+  "screen_trajectory": "lower_right_to_upper_left",
+  "target": "cave_entrance",
+  "distance_to_target": "getting_closer",
+  "phase_beats": [
+    "at foot of stairs",
+    "ascending halfway",
+    "approaching cave entrance"
+  ]
+}
+```
+
+**字段说明：**
+
+| 字段 | 作用 | 示例 |
+|------|------|------|
+| `subject_facing` | 主体身体朝向 | `away_from_camera`, `toward_camera`, `left_profile` |
+| `camera_relation` | 镜头相对主体位置 | `rear_three_quarter`, `front_of_subject`, `side_follow_left` |
+| `movement_direction` | 主体真实运动方向 | `upstairs`, `downstairs`, `toward_target`, `away_from_target`, `static` |
+| `screen_trajectory` | 主体在画面中的轨迹 | `lower_right_to_upper_left`, `left_to_right`, `foreground_to_background` |
+| `target` | 当前动作目标点 | `cave_entrance`, `master`, `cliff_edge` |
+| `distance_to_target` | 与目标点距离变化 | `getting_closer`, `getting_farther`, `holding_position` |
+| `phase_beats` | 时间过程分段 | `["takes first step", "reaches halfway point"]` |
+
+**什么时候必须写：**
+- 角色在镜头内发生明确位移
+- 上下楼、前进后退、转身、接近目标、远离目标
+- 多角色对位、视线交汇、空间调度
+
+**什么时候可以省略：**
+- 纯环境空镜
+- 几乎静止的情绪特写
+- 纯氛围粒子 / 光影镜头
+
+**核心原则：**
+- prose 负责“可读性”，`motion_control` 负责“不可误解性”
+- 如果 prose 与 `motion_control` 冲突，以 `motion_control` 为准
+- `phase_beats` 应该对应动作过程的关键阶段，而不是重复完整句子
 
 ### 4.2 分镜拆分原则 — 3x3 法则
 
@@ -450,7 +511,7 @@ python3 ad_assets.py --mode character_refs --framework framework.json --output_d
 
 **自检方法：** 写完每个 shot 后，想象用一条直线连接首帧状态和尾帧状态。如果这条线需要"折返"（方向反转），就必须拆成两个 shot。
 
-**特别注意 scene 末尾 shot：** 代码只在 scene 最后一个 shot 传尾帧图给 Seedance，强约束终点画面。如果这个 shot 的首帧→尾帧存在方向矛盾，Seedance 会被强制对齐到矛盾的终点，问题最严重。中间 shot 虽然不传尾帧图，但 action_prompt 本身如果描述了往返动作，Seedance 也会产生不自然的运动。
+**特别注意尾帧约束 shot：** 当 `continuity_mode` 为 `"strict"` 或该 shot 是 scene 末尾时，代码会传尾帧图给 Seedance 强约束终点画面。如果这个 shot 的首帧→尾帧存在方向矛盾，Seedance 会被强制对齐到矛盾的终点，问题最严重。其他 shot 虽然不传尾帧图，但 action_prompt 本身如果描述了往返动作，Seedance 也会产生不自然的运动。
 
 ### 4.6.2 chain_from_previous（链式衔接，默认 false）
 
@@ -468,16 +529,96 @@ python3 ad_assets.py --mode character_refs --framework framework.json --output_d
 - `chain_from_previous: true` + `transition_in: {"type": "cross-dissolve", "duration": 0.3}` → 链式+溶解兜底（景别微调时）
 - `chain_from_previous: false` + `transition_in: {...}` → 独立生成首帧 + 剪辑转场掩盖视觉跳变
 
-**链式生成规则：** 同场景内默认链式，以下情况断链独立生图：
+**链式生成规则：** 同场景内**默认独立生成首帧**（`chain_from_previous: false`）。只有当相邻 shot 满足上述全部条件时，才显式设置 `chain_from_previous: true`。以下情况**必须断链**：
 1. **跨场景** — 地点/环境变化
 2. **闪回进入/退出** — 即使叙事上是同一角色的记忆
 3. **时间跳跃导致光线质变** — 如雨天→雨停暖光
 4. **反打/视角大跳** — 角度差异太大无法链式
 
-**首尾帧生成策略：**
-- 每个 scene 只需生成首 shot 的首帧 + 末 shot 的尾帧（锚定起止点）
-- 中间 shot 不独立生尾帧，从实际视频提取最后一帧作为下一 shot 的首帧
-- 尾帧约束只用在 scene 最后一个 shot（确保命中目标画面）
+**首尾帧生成策略（由 `continuity_mode` 控制）：**
+
+每个 shot 必须标注 `continuity_mode`，由你根据叙事结构判断。代码根据这个字段决定是否生成尾帧图。
+
+| 模式 | 含义 | 代码行为 |
+|------|------|---------|
+| `"strict"` | 关键镜头，必须精确落到目标画面 | 生成尾帧图，强约束终点 |
+| `"scene_end"` | 普通镜头（默认） | 仅当该 shot 是 scene 最后一个时生成尾帧图 |
+| `"free"` | 氛围/空镜/过场 | 不生成尾帧图，Seedance 自由运动 |
+
+**你应该标 `"strict"` 的情况（必须有尾帧图锚定终点）：**
+1. **情绪转折点** — 角色表情/情感状态发生关键变化的镜头（如从平静到震惊、从犹豫到坚定）
+2. **角色状态大变化** — 姿态/位置/持有物品发生重要改变（如拿起关键道具、倒下、起身）
+3. **关键动作落点** — 叙事上必须精确到达某个视觉状态的镜头（如递伞完成、门被推开、角色相遇）
+4. **scene 最后一个 shot** — 段落收口，确保命中目标画面（这种情况 `"scene_end"` 也会生成，但如果你认为这个收口特别重要，用 `"strict"` 更明确）
+5. **下一个 shot 是 `chain_from_previous: true`** — 如果下一个 shot 要从本 shot 视频提取尾帧作为首帧，本 shot 的终点状态就必须准确
+
+**你应该标 `"scene_end"`（默认）的情况：**
+- 普通叙事推进，动作方向明确，不需要精确锚定终点
+- scene 内中间镜头，动作自然过渡即可
+
+**你应该标 `"free"` 的情况：**
+- 纯环境空镜（云、水、风景）
+- 氛围渲染段落（慢动作粒子、光影变化）
+- 不包含角色的过场镜头
+
+**典型 scene 内标注示例（3 个 shot）：**
+- Shot 1（角色抬头看向门口）：`"continuity_mode": "scene_end"` — 普通过渡
+- Shot 2（角色快步走向门口，到达门前）：`"continuity_mode": "strict"` — 关键位移落点，下一 shot chain 依赖本帧
+- Shot 3（角色推门出去，光线涌入）：`"continuity_mode": "scene_end"` — scene 末尾，默认也会生成尾帧
+
+### 4.6.3 keyframes（中间关键帧，可选）
+
+**仅当 `continuity_mode: "strict"` 且动作复杂时使用。**
+
+如果一个镜头内有多个关键姿态变化，不是简单的首帧 A → 尾帧 B 单向运动，可以标注中间关键帧：
+
+```json
+"keyframes": [
+  {"timestamp": 3.0, "description": "角色转身面对镜头，表情从平静变为惊讶"},
+  {"timestamp": 6.0, "description": "角色举起手中的伞，伞面完全展开"}
+]
+```
+
+**规则：**
+- `timestamp` 必须在 `0` 到 `estimated_duration` 之间，且按时间递增
+- `description` 遵守单一真相源：写姿态、位置、动作、场景，不写外貌
+- `keyframes` 是 storyboard 的通用字段，用来表达“镜头中间关键状态”
+- 当前执行层里，只有支持多参考图的模型（如支持多参考图的 Seedance 2.0 类模型）会真正把 `keyframes` 转成参考图使用
+- 其他只支持首尾帧的视频模型会自动忽略 `keyframes`，继续只用首帧 / 尾帧
+
+**何时标注 `keyframes`：**
+- 镜头内有明确的阶段性姿态变化（如：蹲下 → 起身 → 转身）
+- 需要精确控制中间某个时刻的画面状态
+- 动作路径复杂，首尾帧不足以约束
+
+**何时不要标注：**
+- 简单的 A → B 运动（走、转头、伸手）
+- 连续流畅的动作（跑步、挥手）
+- 大部分普通推进镜头
+
+#### 4.6.3.1 参考图分配规则（最多 9 张）
+
+当当前视频模型支持多参考图时，代码按以下顺序分配参考图槽位：
+
+1. **首帧图** — 永远占用第 1 张
+2. **中间关键帧 `keyframes`** — 占用中间槽位
+3. **尾帧图** — 如果该 shot 根据 `continuity_mode` 需要尾帧约束，则占用最后 1 张
+
+**槽位计算：**
+- 如果该 shot 需要尾帧图：`1 张首帧 + 最多 7 张 keyframes + 1 张尾帧 = 最多 9 张`
+- 如果该 shot 不需要尾帧图：`1 张首帧 + 最多 8 张 keyframes = 最多 9 张`
+
+**代码行为：**
+- 代码会根据当前视频模型的 `max_reference_images` 自动计算可用槽位
+- 如果 storyboard 中标注的 `keyframes` 超过可用数量，代码只保留前面的关键帧
+- 因此，越重要的中间状态应该越靠前写
+- 当前执行层中，多参考图分配主要用于支持多参考图的 Seedance 2.0 类模型
+- 其他只支持首尾帧的视频模型会自动忽略 `keyframes`，继续只使用首帧 / 尾帧
+
+**示例：**
+- `continuity_mode: "strict"` 且有尾帧 → 最多可写 7 个 `keyframes`
+- `continuity_mode: "scene_end"` 且当前不是 scene 最后一个 shot → 无尾帧，最多可写 8 个 `keyframes`
+- `continuity_mode: "free"` → 不建议写 `keyframes`，代码会忽略
 
 **示例 — 适合链式：**
 - Shot 3: 两人对话中景 → Shot 4: 同一场景两人继续对话，镜头略推近
@@ -487,7 +628,7 @@ python3 ad_assets.py --mode character_refs --framework framework.json --output_d
 - Shot 3（递伞手部特写）→ Shot 4（断桥全景）：景别跳转
 - Shot 2（雨天亭下）→ Shot 3（雨中桥上）：场景变化
 
-### 4.6.3 transition_in（剪辑转场）
+### 4.6.4 transition_in（剪辑转场）
 
 **每个 shot 必须标注 `transition_in`**，描述从前一个 shot 过渡到本 shot 时使用的剪辑转场效果。第一个 shot 的 transition_in 为 `null`。
 
@@ -660,7 +801,7 @@ scene_prompt（起始状态）→ action_prompt（运动过程）→ end_frame_d
 
 ```bash
 # 素材生成
-cd /path/to/skills/ad-generator/scripts
+cd /path/to/skills/xyz-video-skill/scripts
 python3 ad_assets.py \
     --storyboard {output_dir}/storyboard.json \
     --output_dir {output_dir}/assets \
@@ -690,8 +831,125 @@ python3 ad_compose.py \
 7. 按 `characters_in_shot` 逐个传角色参考图给图片模型
 8. 每个 shot：用 first_frame_prompt 生成首帧图 → 用 last_frame_prompt 生成尾帧图 → Seedance I2V 视频（首帧+尾帧+video_action_prompt）
 9. 如果 shot 标记了 `chain_from_previous: true`，从前一 shot 视频提取实际尾帧作为首帧（否则独立生成）
-10. 尾帧图只在 scene 最后一个 shot 生成（中间 shot 让 Seedance 自由发挥，从视频提取尾帧传递）
-11. 生成 BGM
+10. 尾帧图根据 `continuity_mode` 决定是否生成：`"strict"` 强制生成，`"scene_end"` 仅 scene 末尾生成，`"free"` 跳过
+11. **视频质量自动检测**：每段视频生成后自动执行三重检测（详见下方），不合格则自动重试或裁剪
+12. 生成 BGM
+
+### 6.1 两阶段视频质量审查
+
+每段视频生成后，系统会自动执行两阶段质量审查：**阶段1 - 粗筛检测**自动标记风险片段，**阶段2 - LLM 视觉判断**由你（母模型）看图做最终裁定。
+
+**阶段1：粗筛检测（自动）**
+
+粗筛层使用规则检测潜在问题，导出风险片段和关键帧供 LLM 判断：
+
+**第一重：帧间突变 + 闪烁检测**
+
+- 提取全视频帧（缩小到 160px 加速），计算相邻帧 MSE（像素均方差）
+- 用前 1/4 帧的中位数建立"稳定基准"，超过基准 8 倍判定为突变
+- 滑动窗口平滑 MSE，消除自然运动振荡的干扰
+- 正向扫描找第一个连续异常段，反向扫描找最后一个稳定点
+- 闪烁检测：如果 MSE 出现奇偶帧交替跳变（高-低-高-低，连续 8 次以上），判定为闪烁伪影
+
+**第二重：局部突变检测（spike detection）**
+
+- 用 ±12 帧（约 0.5 秒）滑动窗口计算局部 MSE 均值
+- 某帧 MSE 超过局部均值 2.5 倍且绝对值 >150 → 标记为 spike
+- 多个 spike 聚集 → 标记为风险片段
+- 用于捕捉单帧或少数帧的面部变形、画面撕裂
+
+**第三重：人脸变形检测（OpenCV DNN）**
+
+- 使用 OpenCV DNN SSD 人脸检测器
+- 每 3 帧采样一次，追踪人脸置信度变化
+- 如果曾连续 3 个采样点检测到人脸（置信度 ≥0.5），后来置信度骤降到 <0.3 且不再回来 → 判定为人脸变形
+- 如果脸消失后 2 秒内又回来（如角色转身），不判定为变形
+
+**第四重：重复角色检测（HOG + 人脸相似度）**
+
+- HOG 人体检测：检测画面中的多个人体
+- 人脸相似度：对检测到的多个人体/人脸计算相似度
+- 相似度 ≥ 0.70 → 标记为 identity_hallucination（重复角色）
+- 用于捕捉同一角色在画面中重复出现的问题
+
+**粗筛输出：**
+- `quality_audit.json` - 审计报告，status: `pending_judgment`
+- `vision_bundle_attempt_N/` - 风险片段的关键帧图片
+- `vision_judge_request.json` - 判断请求
+
+**阶段2：LLM 视觉判断（你来执行）**
+
+当粗筛检测到风险片段后，系统会暂停并等待你的判断。
+
+**⚠️ 关键要求：你必须认真查看每一帧图片**
+
+1. **使用 Read 工具读取 vision_bundle 中的所有关键帧图片**
+2. **详细描述你看到的画面内容**：
+   - 画面中有几个角色？
+   - 每个角色在哪里？（左侧、右侧、前景、背景）
+   - 角色在做什么动作？
+   - 是否有重复的角色？（同一角色出现多次）
+   - 人脸是否变形或模糊？
+3. **对比粗筛报告**：粗筛说的问题是否真实存在？
+4. **给出判断**：创建 `vision_judge_result.json`
+
+**⚠️ 严禁的错误做法：**
+- ❌ 看到 "Tool ran without output or errors" 就认为图片读取成功，然后不描述内容直接下结论
+- ❌ 只看一两帧就判断整个片段
+- ❌ 不描述画面内容，直接说"没问题"或"有问题"
+
+**正确的判断流程：**
+```
+1. Read 第1帧 → 描述："我看到画面左侧有一个大的悟空头部特写，画面下方地面上有一个小的悟空身影"
+2. Read 第2帧 → 描述："两个悟空仍然存在，位置略有变化"
+3. 对比粗筛：粗筛报告说 identity_hallucination，我确实看到了两个悟空
+4. 判断：确认是重复角色问题，action: cut_segment
+```
+
+**判断结果格式（vision_judge_result.json）：**
+
+```json
+{
+  "shot_id": "002",
+  "segments": [
+    {
+      "start": 2.5,
+      "end": 3.125,
+      "issue_type": "identity_hallucination",
+      "severity": "high",
+      "confidence": 0.95,
+      "action": "cut_segment",
+      "reason": "我看到画面左侧有大的悟空头部特写，画面下方有小的悟空身影，确认是重复角色"
+    }
+  ],
+  "overall_action": "cut_segment",
+  "fallback_used": false
+}
+```
+
+**决策规则：**
+- `keep` - 所有片段都没问题
+- `cut_segment` - 问题片段总时长 < 50% 且剩余视频 ≥ 3秒
+- `regenerate` - 问题片段总时长 ≥ 50% 或剩余视频 < 3秒
+
+**系统会自动合并相邻片段**（间隔 < 0.5s）
+
+**质量审查完整流程：**
+
+```
+视频生成完成
+  ↓
+阶段1：粗筛检测 → 导出 vision_bundle → status: pending_judgment
+  ↓
+【暂停，等待你的判断】
+  ↓
+阶段2：你看图判断 → 创建 vision_judge_result.json
+  ↓
+系统读取判断结果 → 执行决策：
+  - keep → 通过（status: finalized）
+  - cut_segment → 裁剪问题片段（status: finalized）
+  - regenerate → 重新生成视频（status: applied，继续循环）
+```
 
 素材生成完毕后，运行合成脚本：
 - 读取每个 shot 的 `transition_in` 字段，按转场类型拼接（straight-cut / cross-dissolve / flash-white）
