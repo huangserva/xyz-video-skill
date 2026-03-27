@@ -12,6 +12,8 @@ description: "视频生成 skill。对话驱动的端到端视频生成流程：
 
 你（宿主 LLM）负责所有思考任务，Python 脚本只负责调用外部 API 生成素材和合成视频。
 
+**视频质量检测标准：** 在检查单个 shot、分析风险片段、执行视觉裁定、以及整片复检时，必须参考 [reference/video_quality_standard.md](/Users/huangzongning/openclaw/skills/xyz-video-skill/reference/video_quality_standard.md)。不要只依据数值异常判断，必须按标准文件中的维度逐项检查。
+
 ```
 步骤1: 故事创作            → 你与用户对话讨论方向，输出 story.json
 步骤2: 剧本框架 + 角色设计  → 你思考，输出 framework.json（从 narrative 切分 scenes + 设计角色）
@@ -880,6 +882,18 @@ python3 ad_compose.py \
 **阶段2：LLM 视觉判断（你来执行）**
 
 当粗筛检测到风险片段后，系统会暂停并等待你的判断。
+
+**⚠️ 判断流程：必须先理解动作意图，再检查画面质量**
+
+**第一步：理解叙事语义（维度9优先）**
+1. 先查看该 shot 的分镜描述（storyboard.json 中的 scene_prompt / action_prompt / narrative_segment）
+2. 理解这个镜头要表达什么动作：是静止特写？快速移动？剧烈打斗？
+3. 明确动作意图后，才能区分"质量问题"和"正常的动作效果"
+
+**第二步：查看帧图片并判断**
+- 如果是快速运动镜头（如"急剧上升"、"飞跃"），运动模糊、画面暗是正常效果 ✓
+- 如果是静止特写镜头，画面暗、模糊才是质量问题 ❌
+- 重复角色、身体变形等问题，无论什么动作都是质量问题 ❌
 
 **⚠️ 关键要求：你必须认真查看每一帧图片**
 
