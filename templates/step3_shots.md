@@ -1,12 +1,10 @@
-你是一位专业的广告分镜师。请根据以下结构化剧本生成每个镜头的详细分镜。
+你是一位叙事视频分镜师。请根据以下结构化剧本，为每个场景生成详细的分镜。
 
 ## 剧本信息
 - 标题：{{title}}
 - 故事梗概：{{synopsis}}
-- 产品：{{product}}
-- 平台：{{platform}}
 - 总时长：{{duration}}秒
-- 目标镜头数：{{shot_count}}个
+- 叙事原文：{{narrative}}
 
 ## 角色设定
 {{character_details}}
@@ -19,33 +17,57 @@
 
 ## 输出要求
 
-请生成 JSON 格式的分镜列表：
+请生成 JSON 格式的 scenes > shots 嵌套结构：
 
 ```json
 {
-  "shots": [
+  "scenes": [
     {
-      "id": 1,
-      "scene_name": "所属场景名",
-      "duration": 10,
-      "shot_type": "特写/中景/远景/跟拍/转场镜头",
-      "visual_description": "完整画面描述（必须包含角色外貌+服装+场景环境，80-120字）",
-      "end_frame_description": "本镜头结尾画面描述（必须包含角色外貌+服装+场景环境，作为下一镜头的起始画面，80-120字）",
-      "action_prompt": "纯动作描述（用于 Seedance 图生视频，只描述动作变化，不重复外貌和场景，30-50字）",
-      "consistency_anchors": {
-        "characters": [
-          {
-            "name": "角色名",
-            "must_show": ["外貌特征1", "服装特征1"],
-            "expression": "表情"
+      "id": "scene_01",
+      "name": "场景名称",
+      "location": "地点名称",
+      "narrative_segment": "对应 narrative 中的原文段落",
+      "lighting": "光线参数（色温、方向、质感，英文）",
+      "weather": "天气/粒子效果（英文）",
+      "environment_description": "环境视觉描述（英文，80-150字）",
+      "props": ["道具1", "道具2"],
+      "shots": [
+        {
+          "id": 1,
+          "characters_in_shot": ["character_id"],
+          "narrative_segment": "本镜头对应的 narrative 片段",
+          "scene_prompt": "故事起点 + 起始画面状态（英文）",
+          "end_frame_description": "故事终点 + 结束画面状态（必填！英文）",
+          "action_prompt": "动作描述（只写运动过程，英文）",
+          "camera_movement": "运镜方式",
+          "camera_technical": "焦距+光圈",
+          "speed_baseline": "1.0x",
+          "narration": "画外旁白（叙事类内容填写，纯动作/氛围类留空）",
+          "estimated_duration": 8,
+          "chain_from_previous": false,
+          "shot_type": "visible_subject",
+          "continuity_mode": "strict",
+          "motion_control": {
+            "subject_facing": "away_from_camera",
+            "camera_relation": "rear_three_quarter",
+            "movement_direction": "upstairs",
+            "screen_trajectory": "lower_right_to_upper_left",
+            "target": "cave_entrance",
+            "distance_to_target": "getting_closer",
+            "phase_beats": ["at foot of stairs", "ascending halfway", "approaching cave entrance"]
+          },
+          "keyframes": [
+            {"timestamp": 3.0, "description": "角色转身面对镜头，表情从平静变为惊讶"}
+          ],
+          "transition_in": {"type": "cross-dissolve", "duration": 0.5},
+          "consistency_anchors": {
+            "characters": [
+              {"id": "character_id", "must_show": ["特征1", "特征2"], "expression": "情绪"}
+            ],
+            "environment": ["环境元素1", "环境元素2"]
           }
-        ],
-        "environment": ["环境锚点1", "环境锚点2"]
-      },
-      "narration": "本镜头的画外旁白文案，由 LLM 根据内容自行判断是否需要。叙事类/解说类内容应生成旁白，纯动作/氛围类可留空",
-      "tts_text": "旁白文案（已废弃，保留向后兼容，优先使用 narration）",
-      "subtitle": "字幕文案",
-      "transition": "cut/fade/zoom/whip"
+        }
+      ]
     }
   ]
 }
@@ -53,42 +75,64 @@
 
 ## 重要规则
 
-### 1. visual_description（用于生成首帧图）
-- **必须包含角色完整外貌和服装**，每个镜头都要重复描述
-- **必须包含场景环境**
+### 1. 单一真相源 — 不要在 prompt 里重复角色外貌
+- 角色外貌由 characters 定义一次，代码自动注入到生图 prompt
+- scene_prompt / end_frame_description / action_prompt 里**只写姿态、位置、动作、场景**，不写外貌和服装
 - 示例：
-  - ❌ "一个人在办公室工作"
-  - ✓ "25岁女性（圆脸、齐肩黑发、大眼睛）身穿白色衬衫搭配灰色西装裤，坐在现代办公室的工位前，面前是亮着的电脑屏幕，表情疲惫地揉着太阳穴"
+  - ❌ "25岁女性（齐肩黑发、大眼睛）身穿白色衬衫，坐在办公室"
+  - ✅ "She sits at the desk, rubbing her temples with a weary expression, the computer screen glowing in the dim office"
 
-### 2. end_frame_description（本镜头的结尾画面 → 下一镜头的首帧）
-- **关键作用**：确保镜头间视频连续性。本 shot 的 end_frame 会作为下一 shot 的首帧图
-- **必须包含角色完整外貌和服装**（和 visual_description 一样详细）
-- **描述的是本镜头结尾时的画面状态**（动作完成后的样子）
-- 示例：
-  - Shot 1 visual: "25岁女性坐在办公室揉太阳穴"
-  - Shot 1 end_frame: "25岁女性（圆脸、齐肩黑发）身穿白色衬衫，站起身走向窗户，侧身望向窗外的城市夜景，表情若有所思"
-  - Shot 2 visual: 直接从 Shot 1 的 end_frame 出发，无需重新生图
-- **最后一个 shot 不需要 end_frame_description**（没有下一个 shot 了），留空字符串 ""
+### 2. scene_prompt（故事起点 + 首帧状态）
+- 从 narrative_segment 派生，描述这个镜头故事上的出发点
+- 包含角色精确位置、姿态、表情，以及场景视觉细节
+- 推导隐含视觉细节（"下雨"→ 必须写出"撑伞"、"地面湿润"等）
 
-### 3. action_prompt（用于 Seedance 图生视频）
-- 首帧图已确定画面，action_prompt **只描述动作变化**
-- **不要重复**外貌、服装、场景描述
-- **约束**：10秒内可完成的动作
-- 示例：
-  - ❌ "25岁女性身穿白色衬衫在办公室揉太阳穴"（重复了外貌和场景）
-  - ✓ "缓缓放下手，眼睛亮起来，嘴角上扬露出微笑，双手快速在键盘上敲击"
+### 3. end_frame_description（故事终点 + 结束画面状态）
+- **每个 shot 都必须有 end_frame_description，包括最后一个**
+- 描述动作完成后的故事状态和画面状态
+- 同样遵守单一真相源（不写外貌）
+- 首帧→尾帧的运动路径必须单向可插值（不能方向折返）
 
-### 3. consistency_anchors（角色一致性锚点）
-- must_show：该角色在此镜头中必须展示的特征（从角色设定中提取）
-- environment：场景环境的关键锚点（从地点设定中提取）
+### 4. action_prompt（运动过程）
+- 只描述从首帧到尾帧的动作变化
+- 不重复外貌、服装、场景描述
+- 动作必须在 estimated_duration 内物理可完成
 
-### 4. 数量和时长
-- 总镜头数严格等于 {{shot_count}} 个
-- 每个镜头 duration ≤ 10 秒（Seedance i2v 限制）
-- 所有镜头 duration 之和 = {{duration}}
-- 最后一个镜头必须包含 CTA（行动号召）
+### 5. continuity_mode（连续性模式 — 你来判断）
+- **`"strict"`**：关键镜头 — 情绪转折、角色状态大变化、关键动作落点、下一 shot 要 chain 的前一 shot
+- **`"scene_end"`**（默认）：普通叙事推进镜头
+- **`"free"`**：纯氛围空镜、粒子/光影渲染、无角色过场
 
-### 5. image_prompt 不需要输出
-- image_prompt 会由系统从 visual_description 自动翻译生成
+### 6. chain_from_previous（默认 false）
+- 默认每个 shot 独立生成首帧
+- 仅当相邻 shot 满足全部条件时设为 true：角色完全相同、景别相近、场景连续、前一 shot 尾帧适合作为本 shot 起点
+- 跨场景、闪回、时间跳跃、反打/视角大跳时必须 false
+
+### 7. keyframes（可选）
+- 仅当 `continuity_mode: "strict"` 且动作复杂、首尾帧不足以约束时标注
+- 格式：`{"timestamp": 秒数, "description": "中间状态描述"}`
+- `timestamp` 必须落在镜头时长内，按时间递增
+- description 遵守单一真相源：不写外貌和服装
+- 只有支持多参考图的视频模型会使用；其他模型自动忽略
+
+### 5.5. shot_type（生成策略类型）
+- 每个 shot 必须显式标注 `shot_type`
+- 允许值：
+  - `visible_subject`
+  - `offscreen_reaction`
+  - `transition_reveal`
+  - `free_atmosphere`
+- 这不是文档字段，而是后续生成器实际使用的控制信号
+
+### 8. motion_control（结构控制层，人物运动镜头必填）
+- 用来约束“主体朝向 / 镜头相对关系 / 运动方向 / 画面轨迹 / 目标关系 / 时间阶段”
+- 这是为了防止“明明要上楼却看起来像下楼”“本该背向镜头却被画成面向镜头”这类错误
+- 格式：
+  `{"subject_facing":"away_from_camera","camera_relation":"rear_three_quarter","movement_direction":"upstairs","screen_trajectory":"lower_right_to_upper_left","target":"cave_entrance","distance_to_target":"getting_closer","phase_beats":["at foot of stairs","ascending halfway"]}`
+- 如果 prose 和 `motion_control` 冲突，以 `motion_control` 为准
+- 纯空镜、几乎静止特写可以省略
+### 9. 数量和时长
+- 每个 shot 的 estimated_duration 为 5-10 秒
+- 所有 shot 的 estimated_duration 之和应接近 {{duration}}
 
 请只输出 JSON，不要有其他内容。

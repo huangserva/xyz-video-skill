@@ -1,7 +1,7 @@
 """内容过滤和结构化 prompt 构建。
 
 移植自 xyz-video-creator 的 core_principles.py + content_filter.py，
-适配 ad-generator 的 CLI 工作流（无数据库，基于 JSON 文件）。
+适配 xyz-video-skill 的 CLI 工作流（无数据库，基于 JSON 文件）。
 
 核心功能：
 1. 从文本中移除服装/外貌描述（单一真相源原则）
@@ -123,22 +123,139 @@ class ContentFilter:
         return len(found) > 0, found
 
 
-# ── VideoPromptBuilder（适配 ad-generator） ──────────────────
+# ── VideoPromptBuilder（适配 xyz-video-skill） ──────────────────
 
 class VideoPromptBuilder:
     """结构化 prompt 构建器。
 
     与 oii 的区别：
-    - 无对白/旁白逻辑（ad-generator 用 narration 字段由 Seedance 音画同轨处理）
+    - 无对白/旁白逻辑（xyz-video-skill 用 narration 字段由 Seedance 音画同轨处理）
     - 角色信息从 storyboard.characters dict 读取
     - 支持 consistency_anchors
     """
+
+    @staticmethod
+    def infer_style_medium_lock(style_anchor: str) -> dict[str, str]:
+        """从 style_anchor 推断媒介锁，避免写实/插画媒介混用。"""
+        anchor = (style_anchor or "").strip()
+        lower = anchor.lower()
+
+        illustrated_tokens = [
+            "ink", "brush", "painterly", "painted", "illustrated", "illustration",
+            "anime", "animation", "manga", "comic", "cel-shaded", "stylized",
+            "watercolor", "oil painting", "concept art",
+        ]
+        photoreal_tokens = [
+            "photoreal", "photo-real", "live-action", "live action", "realistic",
+            "cinematic realism", "natural skin", "lens-based", "film still",
+        ]
+        three_d_tokens = [
+            "3d", "cg", "cgi", "rendered", "unreal", "octane", "game cinematic",
+        ]
+
+        if any(token in lower for token in illustrated_tokens):
+            return {
+                "medium": "illustrated",
+                "lock_line": (
+                    "STYLE MEDIUM LOCK: illustrated / painterly cinematic frame. "
+                    "All shots must remain in the same illustrated medium. "
+                    "Do NOT drift into photorealistic live-action imagery."
+                ),
+            }
+        if any(token in lower for token in three_d_tokens):
+            return {
+                "medium": "three_dimensional",
+                "lock_line": (
+                    "STYLE MEDIUM LOCK: stylized 3D / CG cinematic frame. "
+                    "All shots must remain in the same 3D-rendered medium. "
+                    "Do NOT drift into hand-drawn illustration or live-action photorealism."
+                ),
+            }
+        if any(token in lower for token in photoreal_tokens):
+            return {
+                "medium": "photorealistic",
+                "lock_line": (
+                    "STYLE MEDIUM LOCK: photorealistic live-action cinematic frame. "
+                    "All shots must remain in the same photoreal medium. "
+                    "Do NOT drift into illustration, anime, comic, or painterly rendering."
+                ),
+            }
+        return {
+            "medium": "unspecified",
+            "lock_line": (
+                "STYLE MEDIUM LOCK: choose ONE visual medium for the entire project and keep it identical "
+                "across all shots. Do NOT switch between photorealistic, illustrated, anime, comic, or 3D render styles."
+            ),
+        }
+
+    @staticmethod
+    def _append_subject_constraints(parts: list[str], subject_constraints: dict[str, Any] | None) -> None:
+        """把 shot 级主体语义约束写入 prompt。"""
+        if not isinstance(subject_constraints, dict) or not subject_constraints:
+            return
+
+        mapping = [
+            ("required_visible_subjects", "Required visible subjects"),
+            ("optional_visible_subjects", "Optional visible subjects"),
+            ("offscreen_subjects", "Offscreen subjects"),
+            ("continuity_subjects", "Continuity-bound subjects"),
+            ("forbidden_visible_subjects", "Forbidden visible subjects"),
+        ]
+        lines: list[str] = []
+        for key, label in mapping:
+            value = subject_constraints.get(key, [])
+            if isinstance(value, list):
+                cleaned = [str(item).strip() for item in value if str(item).strip()]
+                if cleaned:
+                    lines.append(f"  {label}: {', '.join(cleaned)}")
+
+        semantic_rules = subject_constraints.get("semantic_rules", [])
+        if isinstance(semantic_rules, list):
+            cleaned_rules = [str(item).strip() for item in semantic_rules if str(item).strip()]
+            for rule in cleaned_rules:
+                lines.append(f"  Rule: {rule}")
+
+        if lines:
+            parts.append("")
+            parts.append("⚠️ SUBJECT CONTRACT — this shot must obey these subject-level constraints:")
+            parts.extend(lines)
+
+    @staticmethod
+    def _append_shot_type_rules(parts: list[str], shot_type: str) -> None:
+        """把 shot 类型对应的通用生成策略写入 prompt。"""
+        rules = {
+            "visible_subject": [
+                "Keep all required visible subjects clearly and continuously in frame.",
+                "Do not swap subject identity, species, or count mid-shot.",
+            ],
+            "offscreen_reaction": [
+                "This is a reaction shot. Keep the threat or target OFFSCREEN throughout the shot.",
+                "Do not reveal, hallucinate, or partially introduce unseen entities into frame.",
+                "Express danger only through gaze, pose, environment, sound implication, wind, dust, or lighting change.",
+            ],
+            "transition_reveal": [
+                "This shot bridges from offscreen implication to onscreen reveal.",
+                "If a new entity appears, reveal it gradually and keep identity consistent with later shots.",
+            ],
+            "free_atmosphere": [
+                "This is an atmosphere shot. Prioritize mood and environment continuity over character action.",
+            ],
+        }
+        cleaned = str(shot_type or "").strip()
+        if not cleaned:
+            return
+        selected = rules.get(cleaned, [])
+        parts.append("")
+        parts.append(f"⚠️ SHOT TYPE — {cleaned}")
+        for rule in selected:
+            parts.append(f"  Rule: {rule}")
 
     @staticmethod
     def build_image_prompt(
         style_anchor: str,
         character_appearances: list[tuple[str, str]],
         scene_description: str,
+        motion_control: dict[str, Any] | None = None,
         camera_technical: str = "",
         atmosphere: str = "",
         physics: str = "",
@@ -149,6 +266,8 @@ class VideoPromptBuilder:
         scene_lighting: str = "",
         scene_weather: str = "",
         scene_props: list[str] | None = None,
+        subject_constraints: dict[str, Any] | None = None,
+        shot_type: str = "",
     ) -> str:
         """构建图片生成 prompt（给 Gemini 用）。
 
@@ -156,6 +275,7 @@ class VideoPromptBuilder:
             style_anchor: 全局风格锚点
             character_appearances: [(char_id, appearance_text), ...]
             scene_description: 本镜头特有的动作/构图描述（已过滤外貌）
+            motion_control: 结构化运动控制字段
             camera_technical: 焦距+光圈
             atmosphere: 光影参数（向下兼容旧 storyboard，scene_lighting 优先）
             physics: 物理细节（向下兼容旧 storyboard，scene_weather 优先）
@@ -165,6 +285,8 @@ class VideoPromptBuilder:
             scene_lighting: 场景光线参数（来自 scene 层，同场景共享）
             scene_weather: 天气/粒子效果（来自 scene 层，同场景共享）
             scene_props: 场景道具列表（来自 scene 层，同场景共享）
+            subject_constraints: shot 级主体语义约束
+            shot_type: shot 级生成策略类型
         """
         clean_scene = ContentFilter.remove_clothing_descriptions(scene_description)
 
@@ -173,6 +295,12 @@ class VideoPromptBuilder:
         # 风格锚点
         if style_anchor:
             parts.append(style_anchor)
+        style_lock = VideoPromptBuilder.infer_style_medium_lock(style_anchor)
+        if style_lock.get("lock_line"):
+            parts.append(style_lock["lock_line"])
+
+        VideoPromptBuilder._append_shot_type_rules(parts, shot_type)
+        VideoPromptBuilder._append_subject_constraints(parts, subject_constraints)
 
         # 角色外观设定（唯一真相来源）
         if character_appearances:
@@ -223,6 +351,27 @@ class VideoPromptBuilder:
             parts.append("⚠️ SCENE ENVIRONMENT — shared by ALL shots in this scene, MUST be consistent:")
             parts.extend(env_parts)
 
+        if motion_control:
+            mc_lines = []
+            for label, key in [
+                ("Subject facing", "subject_facing"),
+                ("Camera relation", "camera_relation"),
+                ("Movement direction", "movement_direction"),
+                ("Screen trajectory", "screen_trajectory"),
+                ("Target", "target"),
+                ("Distance to target", "distance_to_target"),
+            ]:
+                value = str(motion_control.get(key, "")).strip()
+                if value:
+                    mc_lines.append(f"  {label}: {value}")
+            phase_beats = motion_control.get("phase_beats", [])
+            if isinstance(phase_beats, list) and phase_beats:
+                mc_lines.append(f"  Phase beats: {' -> '.join(str(item).strip() for item in phase_beats if str(item).strip())}")
+            if mc_lines:
+                parts.append("")
+                parts.append("⚠️ MOTION CONTROL — MUST preserve these spatial and temporal relations:")
+                parts.extend(mc_lines)
+
         # 本镜头描述（已清洗，不含外貌；只写动作/构图/姿态）
         parts.append("")
         parts.append(f"SHOT: {clean_scene}")
@@ -247,26 +396,47 @@ class VideoPromptBuilder:
 
     @staticmethod
     def build_video_prompt(
+        style_anchor: str,
         character_appearances: list[tuple[str, str]],
         action_description: str,
+        motion_control: dict[str, Any] | None = None,
         camera_movement: str = "",
         consistency_anchors: dict[str, Any] | None = None,
         narration: str = "",
         scene_environment: str = "",
+        subject_constraints: dict[str, Any] | None = None,
+        shot_type: str = "",
     ) -> str:
         """构建视频生成 prompt（给 Seedance 用）。
 
         Args:
             character_appearances: [(char_id, appearance_text), ...]
             action_description: 动作描述（已过滤外貌）
+            motion_control: 结构化运动控制字段
             camera_movement: 运镜方式
             consistency_anchors: 一致性锚点
             narration: 旁白文本（Seedance 音画同轨）
             scene_environment: 场景环境简述（来自 scene 层）
+            subject_constraints: shot 级主体语义约束
+            shot_type: shot 级生成策略类型
         """
         clean_action = ContentFilter.remove_clothing_descriptions(action_description)
 
         parts = []
+
+        if style_anchor:
+            parts.append(f"【全局风格锚点】{style_anchor}")
+        style_lock = VideoPromptBuilder.infer_style_medium_lock(style_anchor)
+        if style_lock.get("lock_line"):
+            parts.append(f"【媒介锁定】{style_lock['lock_line']}")
+            parts.append("")
+
+        if shot_type:
+            VideoPromptBuilder._append_shot_type_rules(parts, shot_type)
+            parts.append("")
+        if subject_constraints:
+            VideoPromptBuilder._append_subject_constraints(parts, subject_constraints)
+            parts.append("")
 
         # 角色外观设定
         if character_appearances:
@@ -294,6 +464,29 @@ class VideoPromptBuilder:
             if anchor_lines:
                 parts.append("【一致性要素】")
                 parts.extend(anchor_lines)
+                parts.append("")
+
+        if motion_control:
+            mc_lines = []
+            for label, key in [
+                ("主体朝向", "subject_facing"),
+                ("镜头相对主体", "camera_relation"),
+                ("运动方向", "movement_direction"),
+                ("画面轨迹", "screen_trajectory"),
+                ("目标点", "target"),
+                ("与目标距离变化", "distance_to_target"),
+            ]:
+                value = str(motion_control.get(key, "")).strip()
+                if value:
+                    mc_lines.append(f"{label}: {value}")
+            phase_beats = motion_control.get("phase_beats", [])
+            if isinstance(phase_beats, list):
+                cleaned_beats = [str(item).strip() for item in phase_beats if str(item).strip()]
+                if cleaned_beats:
+                    mc_lines.append(f"阶段节点: {' -> '.join(cleaned_beats)}")
+            if mc_lines:
+                parts.append("【运动结构控制】")
+                parts.extend(mc_lines)
                 parts.append("")
 
         # 动作（核心内容）

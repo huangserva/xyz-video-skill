@@ -52,6 +52,13 @@ class StoryTime(str, Enum):
     DAWN = "dawn"
 
 
+class ContinuityMode(str, Enum):
+    """连续性控制模式（由宿主 LLM 在 storyboard 中标注）"""
+    STRICT = "strict"        # 强约束：生成尾帧图锚定终点（关键叙事转折、角色状态大变化）
+    SCENE_END = "scene_end"  # 默认：仅 scene 末尾 shot 生成尾帧图
+    FREE = "free"            # 自由运动：不生成尾帧图，Seedance 自由补全
+
+
 class ShotStatus(str, Enum):
     """分镜状态"""
     PENDING = "pending"
@@ -124,6 +131,39 @@ class ConsistencyAnchors:
 
 
 @dataclass
+class Keyframe:
+    """镜头内关键帧锚点。"""
+    timestamp: float
+    description: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Keyframe:
+        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+
+
+@dataclass
+class MotionControl:
+    """运动结构控制层。"""
+    subject_facing: str = ""
+    camera_relation: str = ""
+    movement_direction: str = ""
+    screen_trajectory: str = ""
+    target: str = ""
+    distance_to_target: str = ""
+    phase_beats: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> MotionControl:
+        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+
+
+@dataclass
 class Shot:
     """分镜"""
     sequence: int
@@ -135,6 +175,8 @@ class Shot:
     camera: str = "中景"
     dialogue: Optional[dict] = None     # {speaker, text, emotion}
     consistency_anchors: Optional[dict] = None
+    subject_constraints: Optional[dict] = None
+    shot_type: str = "visible_subject"
     narration: str = ""                # 画外旁白文案（Seedance 音画同轨）
     # PONYO 6D 框架增强字段
     camera_movement: str = ""          # S: 运镜方式（推/拉/摇/跟/环绕/固定）
@@ -143,9 +185,13 @@ class Shot:
     physics_note: str = ""             # P: 物理细节（布料飘动/尘埃/光影折射等）
     speed_baseline: str = "1.0x"       # E: 动作速度倍率
     transition_out: str = "cut"
-    # ad-generator 独有：末帧描述（视觉连续性）
+    # xyz-video-skill 独有：末帧描述（视觉连续性）
     end_frame_description: str = ""
     end_frame_prompt: str = ""
+    # 连续性控制模式（由宿主 LLM 标注）
+    continuity_mode: str = "scene_end"  # strict / scene_end / free
+    motion_control: Optional[MotionControl] = None
+    keyframes: list[Keyframe] = field(default_factory=list)
     # 生成结果
     first_frame_url: Optional[str] = None
     last_frame_url: Optional[str] = None
@@ -159,7 +205,16 @@ class Shot:
 
     @classmethod
     def from_dict(cls, data: dict) -> Shot:
-        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+        payload = {
+            k: v
+            for k, v in data.items()
+            if k in cls.__dataclass_fields__ and k not in {"keyframes", "motion_control"}
+        }
+        shot = cls(**payload)
+        if isinstance(data.get("motion_control"), dict):
+            shot.motion_control = MotionControl.from_dict(data["motion_control"])
+        shot.keyframes = [Keyframe.from_dict(item) for item in data.get("keyframes", []) if isinstance(item, dict)]
+        return shot
 
 
 @dataclass

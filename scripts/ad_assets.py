@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import shutil
 import json
 import logging
 import os
@@ -30,6 +31,7 @@ from content_filter import ContentFilter, VideoPromptBuilder
 logger = logging.getLogger(__name__)
 DETECTOR_VERSION = "quality_profiles_v5"
 REVIEW_MODES = {"metrics_only", "hybrid_judge"}
+SHOT_TYPES = {"visible_subject", "offscreen_reaction", "transition_reveal", "free_atmosphere"}
 
 QUALITY_PROFILES: dict[str, dict[str, float | int]] = {
     "static": {
@@ -80,7 +82,7 @@ QUALITY_PROFILES: dict[str, dict[str, float | int]] = {
 
 GEMINI_IMAGE_SYSTEM_PROMPT = (
     "You are a cinematic image generator for a professional video production pipeline. "
-    "Your task is to generate a single photorealistic cinematic frame that will be used as "
+    "Your task is to generate a single cinematic frame that will be used as "
     "a keyframe for AI video generation (Seedance I2V).\n\n"
     "CRITICAL RULES:\n"
     "1. STYLE LOCK: The style_anchor provided in the prompt defines the EXACT visual style — "
@@ -181,6 +183,15 @@ class AssetGenerator:
         review_cfg.setdefault("export_risk_bundle", self.review_mode == "hybrid_judge")
         return review_cfg
 
+    @staticmethod
+    def _shot_type(shot: dict[str, Any]) -> str:
+        shot_type = str(shot.get("shot_type", "")).strip()
+        if shot_type in SHOT_TYPES:
+            return shot_type
+        if str(shot.get("continuity_mode", "")).strip() == "free":
+            return "free_atmosphere"
+        return "visible_subject"
+
     async def run(self) -> dict[str, Any]:
         """执行素材生成。"""
         # ── 支持 scenes > shots 结构，向下兼容 flat shots ──
@@ -214,12 +225,24 @@ class AssetGenerator:
 
         # 串行处理：按 scene > shots 顺序
         shot_results = []
+        pending_reviews: list[dict[str, Any]] = []
         previous_video_path: Path | None = None
         shot_index = 0
+        pause_pipeline = False
+
+        allow_style_reset_between_scenes = bool(
+            self.storyboard.get("allow_style_reset_between_scenes", False)
+        )
 
         for scene in scenes:
-            # 跨场景重置：不将上一场景的尾帧传递到新场景
-            previous_video_path = None
+            if pause_pipeline:
+                break
+            scene_resets_visual_continuity = bool(
+                scene.get("reset_visual_continuity", allow_style_reset_between_scenes)
+            )
+            carry_style_reference_from_previous_scene = (
+                previous_video_path is not None and not scene_resets_visual_continuity
+            )
 
             # 提取 scene 层级环境上下文（同场景所有镜头共享）
             scene_context = {
@@ -238,6 +261,8 @@ class AssetGenerator:
 
             scene_shots = scene.get("shots", [])
             for i, shot in enumerate(scene_shots):
+                if pause_pipeline:
+                    break
                 shot_index += 1
                 is_last_in_scene = (i == len(scene_shots) - 1)
                 continuity_mode = shot.get("continuity_mode", "scene_end")
@@ -245,6 +270,7 @@ class AssetGenerator:
 
                 # chain_from_previous: 从上一 shot 的实际视频提取尾帧作为首帧
                 chain = shot.get("chain_from_previous", False)
+                style_reference_frame: Path | None = None
                 if chain and previous_video_path:
                     # 从视频提取实际最后一帧（比生成的尾帧图更连贯）
                     extracted_frame_path = self.image_dir / f"shot_{shot.get('id', 0):03d}_chained.png"
@@ -256,13 +282,42 @@ class AssetGenerator:
                         first_frame = None
                 else:
                     first_frame = None
+                    if i == 0 and carry_style_reference_from_previous_scene and previous_video_path:
+                        style_ref_path = self.image_dir / f"shot_{shot.get('id', 0):03d}_style_ref.png"
+                        style_reference_frame = self._extract_video_last_frame(previous_video_path, style_ref_path)
+                        if style_reference_frame:
+                            logger.info(
+                                f"shot_{shot.get('id')}: 跨 scene 保留风格连续性，"
+                                "使用上一镜头尾帧作为 style reference"
+                            )
+                        else:
+                            logger.warning(
+                                f"shot_{shot.get('id')}: style reference 提取失败，fallback 到独立生成"
+                            )
 
                 result = await self._generate_shot(
                     shot, provided_first_frame=first_frame,
                     scene_context=scene_context, extracted_prompts=extracted_prompts,
                     is_last_in_scene=is_last_in_scene,
                     continuity_mode=continuity_mode,
+                    style_reference_frame=style_reference_frame,
                 )
+                image_review = result.get("image_review")
+                if isinstance(image_review, dict) and image_review.get("status") == "pending_judgment":
+                    pending_reviews.append(
+                        {
+                            "shot_id": shot.get("id"),
+                            "review_type": "image",
+                            **image_review,
+                        }
+                    )
+                    shot_results.append(result)
+                    previous_video_path = None
+                    pause_pipeline = True
+                    logger.info(
+                        f"shot_{shot.get('id')}: 图片阶段等待视觉判断，暂停后续素材生成"
+                    )
+                    continue
 
                 # 视频质量检测 + 自动重试/裁剪 + 审查追踪
                 max_retries = 2
@@ -343,6 +398,7 @@ class AssetGenerator:
                                     scene_context=scene_context, extracted_prompts=extracted_prompts,
                                     is_last_in_scene=is_last_in_scene,
                                     continuity_mode=continuity_mode,
+                                    style_reference_frame=style_reference_frame,
                                 )
                                 continue
                             elif overall_action == "cut_segment":
@@ -384,6 +440,7 @@ class AssetGenerator:
                             scene_context=scene_context, extracted_prompts=extracted_prompts,
                             is_last_in_scene=is_last_in_scene,
                             continuity_mode=continuity_mode,
+                            style_reference_frame=style_reference_frame,
                         )
                         continue
                     elif quality["needs_regeneration"]:
@@ -431,6 +488,16 @@ class AssetGenerator:
         images = [r["image"] for r in shot_results]
         videos = [r["video"] for r in shot_results if "video" in r]
 
+        if pending_reviews:
+            return {
+                "generated_at": timestamp_id(),
+                "asset_root": str(self.output_root),
+                "images": images,
+                "videos": videos,
+                "bgm": None,
+                "pending_reviews": pending_reviews,
+            }
+
         # BGM
         duration = int(self.storyboard.get("total_duration", 60))
         bgm_style = str(self.storyboard.get("bgm_style", "upbeat"))
@@ -442,6 +509,7 @@ class AssetGenerator:
             "images": images,
             "videos": videos,
             "bgm": {"path": str(bgm_path), "provider": bgm_provider, "style": bgm_style},
+            "pending_reviews": pending_reviews,
         }
 
     @staticmethod
@@ -1655,6 +1723,140 @@ class AssetGenerator:
         logger.warning(f"场景 {scene_id}: 场景图生成失败，分镜将不使用场景参考图")
         return None
 
+    def _collect_character_ref_bindings(self, characters_in_shot: list[str]) -> list[dict[str, Any]]:
+        bindings: list[dict[str, Any]] = []
+        characters_cfg = self.storyboard.get("characters", {})
+        ref_dir = str(self.storyboard.get("character_ref_dir", "")).strip()
+        for char_id in characters_in_shot:
+            char_info = characters_cfg.get(char_id, {})
+            ref_image = str(char_info.get("ref_image", "")).strip()
+            ref_path_value = str(char_info.get("ref_path", "")).strip()
+            resolved_path: Path | None = None
+            if ref_path_value:
+                resolved_path = Path(ref_path_value).expanduser().resolve()
+            elif ref_image and ref_dir:
+                resolved_path = (Path(ref_dir) / ref_image).expanduser().resolve()
+            bindings.append(
+                {
+                    "character_id": char_id,
+                    "ref_image": ref_image,
+                    "ref_path": str(resolved_path) if resolved_path else None,
+                    "exists": bool(resolved_path and resolved_path.exists()),
+                }
+            )
+        return bindings
+
+    def _assess_image_review_risk(
+        self,
+        shot: dict[str, Any],
+        image_provider: str,
+        character_ref_bindings: list[dict[str, Any]],
+        style_reference_frame: Path | None,
+    ) -> dict[str, Any]:
+        reasons: list[dict[str, Any]] = []
+        if image_provider == "placeholder":
+            reasons.append(
+                {
+                    "reason": "placeholder_image",
+                    "severity": "high",
+                    "details": "Image generation fell back to placeholder output.",
+                }
+            )
+        missing_refs = [item["character_id"] for item in character_ref_bindings if not item.get("exists")]
+        if missing_refs:
+            reasons.append(
+                {
+                    "reason": "missing_character_reference",
+                    "severity": "high",
+                    "details": f"Missing character refs: {', '.join(missing_refs)}",
+                }
+            )
+        if style_reference_frame and style_reference_frame.exists():
+            reasons.append(
+                {
+                    "reason": "cross_scene_style_continuity",
+                    "severity": "medium",
+                    "details": "This shot starts a new scene but should preserve the previous scene's visual medium and character rendering.",
+                }
+            )
+        return {
+            "needs_review": bool(reasons),
+            "reasons": reasons,
+        }
+
+    def _export_image_review_bundle(
+        self,
+        shot: dict[str, Any],
+        image_path: Path,
+        image_provider: str,
+        scene_image: Path | None,
+        style_reference_frame: Path | None,
+        character_ref_bindings: list[dict[str, Any]],
+        risk: dict[str, Any],
+    ) -> Path:
+        shot_id = int(shot.get("id", 0))
+        bundle_dir = self.output_root / "image_audit" / f"shot_{shot_id:03d}" / "image_bundle"
+        bundle_dir.mkdir(parents=True, exist_ok=True)
+
+        shot_image_copy = bundle_dir / image_path.name
+        if image_path.exists():
+            shutil.copy2(image_path, shot_image_copy)
+
+        copied_scene_image: str | None = None
+        if scene_image and scene_image.exists():
+            scene_copy = bundle_dir / f"scene_reference{scene_image.suffix}"
+            shutil.copy2(scene_image, scene_copy)
+            copied_scene_image = str(scene_copy)
+
+        copied_style_reference: str | None = None
+        if style_reference_frame and style_reference_frame.exists():
+            style_copy = bundle_dir / f"style_reference{style_reference_frame.suffix}"
+            shutil.copy2(style_reference_frame, style_copy)
+            copied_style_reference = str(style_copy)
+
+        copied_character_refs: list[dict[str, Any]] = []
+        for binding in character_ref_bindings:
+            ref_path = binding.get("ref_path")
+            copied_entry = dict(binding)
+            if ref_path and Path(ref_path).exists():
+                src = Path(ref_path)
+                dst = bundle_dir / f"character_ref_{binding['character_id']}{src.suffix}"
+                shutil.copy2(src, dst)
+                copied_entry["copied_path"] = str(dst)
+            copied_character_refs.append(copied_entry)
+
+        payload = {
+            "shot_id": shot_id,
+            "review_type": "image",
+            "review_mode": self.review_mode,
+            "image_path": str(shot_image_copy),
+            "image_provider": image_provider,
+            "scene_reference_path": copied_scene_image,
+            "style_reference_path": copied_style_reference,
+            "character_refs": copied_character_refs,
+            "risk_summary": risk,
+            "shot_context": {
+                "scene_prompt": shot.get("scene_prompt") or shot.get("image_prompt", ""),
+                "action_prompt": shot.get("action_prompt", ""),
+                "end_frame_description": shot.get("end_frame_description", ""),
+                "camera_movement": shot.get("camera_movement", ""),
+                "camera_technical": shot.get("camera_technical", ""),
+                "characters_in_shot": shot.get("characters_in_shot", []),
+                "shot_type": shot.get("shot_type", ""),
+                "consistency_anchors": shot.get("consistency_anchors", {}),
+                "motion_control": shot.get("motion_control", {}),
+                "subject_constraints": shot.get("subject_constraints", {}),
+            },
+            "judge_questions": [
+                "Does this shot preserve the same visual medium and rendering style as the prior scene when continuity is expected?",
+                "Do the main characters still match their reference identity and material treatment?",
+                "Is there an obvious photorealistic vs illustrated/anime style jump that should block video generation?",
+                "Should this image be kept or regenerated before video generation?",
+            ],
+        }
+        write_json(bundle_dir / "image_review_request.json", payload)
+        return bundle_dir
+
     async def _extract_all_shot_prompts(
         self, all_shots: list[dict[str, Any]],
     ) -> dict[int, dict[str, str]]:
@@ -1690,6 +1892,9 @@ class AssetGenerator:
 
         model = llm_cfg.get("model", "gemini-2.5-flash")
         timeout = llm_cfg.get("timeout", 120)
+
+        style_anchor = str(self.storyboard.get("style_anchor", ""))
+        style_medium_lock = VideoPromptBuilder.infer_style_medium_lock(style_anchor)
 
         # 构建 system prompt
         system_prompt = (
@@ -1737,6 +1942,12 @@ class AssetGenerator:
         user_parts = []
         if narrative:
             user_parts.append(f"COMPLETE NARRATIVE:\n{narrative}")
+            user_parts.append("")
+        if style_anchor:
+            user_parts.append(f"GLOBAL STYLE ANCHOR:\n{style_anchor}")
+            user_parts.append("")
+        if style_medium_lock.get("lock_line"):
+            user_parts.append(f"STYLE MEDIUM LOCK:\n{style_medium_lock['lock_line']}")
             user_parts.append("")
 
         for i, shot in enumerate(all_shots):
@@ -1856,6 +2067,7 @@ class AssetGenerator:
         extracted_prompts: dict[int, dict[str, str]] | None = None,
         is_last_in_scene: bool = True,
         continuity_mode: str = "scene_end",
+        style_reference_frame: Path | None = None,
     ) -> dict[str, Any]:
         """生成单镜头素材。
 
@@ -1879,6 +2091,8 @@ class AssetGenerator:
         characters_in_shot = shot.get("characters_in_shot", [])
         consistency_anchors = shot.get("consistency_anchors")
         motion_control = shot.get("motion_control")
+        subject_constraints = shot.get("subject_constraints")
+        shot_type = self._shot_type(shot)
 
         # 6D 增强字段
         camera_move = str(shot.get("camera_movement", ""))
@@ -1916,10 +2130,13 @@ class AssetGenerator:
             scene_lighting=scene_context.get("lighting", ""),
             scene_weather=scene_context.get("weather", ""),
             scene_props=scene_context.get("props"),
+            subject_constraints=subject_constraints,
+            shot_type=shot_type,
         )
 
         # ── 场景参考图（同场景所有镜头共享的视觉基底）──
         scene_image = scene_context.get("scene_image")
+        character_ref_bindings = self._collect_character_ref_bindings(characters_in_shot)
 
         # ── 首帧图：优先复用上一镜头尾帧，否则自己生成 ──
         if provided_first_frame and provided_first_frame.exists():
@@ -1932,14 +2149,63 @@ class AssetGenerator:
                     image_prompt, shot_id,
                     characters_in_shot=characters_in_shot,
                     scene_image=scene_image,
+                    style_reference_image=style_reference_frame,
                 )
 
+        image_review_risk = self._assess_image_review_risk(
+            shot=shot,
+            image_provider=image_provider,
+            character_ref_bindings=character_ref_bindings,
+            style_reference_frame=style_reference_frame,
+        )
+
+        if self.review_mode == "hybrid_judge" and image_review_risk.get("needs_review"):
+            bundle_dir = self._export_image_review_bundle(
+                shot=shot,
+                image_path=image_path,
+                image_provider=image_provider,
+                scene_image=scene_image,
+                style_reference_frame=style_reference_frame,
+                character_ref_bindings=character_ref_bindings,
+                risk=image_review_risk,
+            )
+            judge_result_path = bundle_dir / "image_judge_result.json"
+            result = {
+                "image": {"shot_id": shot_id, "path": str(image_path), "provider": image_provider},
+                "image_review": {
+                    "status": "pending_judgment",
+                    "bundle_dir": str(bundle_dir),
+                    "risk_summary": image_review_risk,
+                },
+            }
+            if judge_result_path.exists():
+                with open(judge_result_path, encoding="utf-8") as f:
+                    judge_result = json.load(f)
+                overall_action = str(judge_result.get("overall_action", "keep")).strip() or "keep"
+                result["image_review"] = {
+                    "status": "judged",
+                    "bundle_dir": str(bundle_dir),
+                    "risk_summary": image_review_risk,
+                    "judge_result": judge_result,
+                }
+                if overall_action != "keep":
+                    result["image_review"]["status"] = "pending_judgment"
+                else:
+                    logger.info(f"shot_{shot_id}: 图片视觉判断通过，继续生成视频")
+            else:
+                logger.info(f"shot_{shot_id}: 图片风险 bundle 已导出，等待视觉判断 → {bundle_dir}")
+
+            if result["image_review"]["status"] == "pending_judgment":
+                return result
+
         keyframe_results: list[dict[str, Any]] = []
+        if shot_type == "offscreen_reaction":
+            logger.info(f"shot_{shot_id}: shot_type=offscreen_reaction，禁用中间实体 reveal keyframes")
         should_generate_end_frame = (
             continuity_mode == "strict"
             or (continuity_mode == "scene_end" and is_last_in_scene)
         )
-        if continuity_mode != "free" and self._any_video_provider_supports_keyframes():
+        if shot_type != "offscreen_reaction" and continuity_mode != "free" and self._any_video_provider_supports_keyframes():
             keyframes = shot.get("keyframes", [])
             max_refs = self._max_video_reference_images()
             available_slots = max_refs - 1  # first_frame
@@ -1971,6 +2237,8 @@ class AssetGenerator:
                     scene_lighting=scene_context.get("lighting", ""),
                     scene_weather=scene_context.get("weather", ""),
                     scene_props=scene_context.get("props"),
+                    subject_constraints=subject_constraints,
+                    shot_type=shot_type,
                 )
                 timestamp_slug = str(keyframe_timestamp).replace(".", "_")
                 keyframe_out = self.image_dir / f"shot_{shot_id:03d}_keyframe_{idx + 1}_{timestamp_slug}s.png"
@@ -1981,6 +2249,7 @@ class AssetGenerator:
                         output_path=keyframe_out,
                         characters_in_shot=characters_in_shot,
                         scene_image=scene_image,
+                        style_reference_image=style_reference_frame,
                     )
                 keyframe_results.append(
                     {
@@ -2014,6 +2283,8 @@ class AssetGenerator:
                 scene_lighting=scene_context.get("lighting", ""),
                 scene_weather=scene_context.get("weather", ""),
                 scene_props=scene_context.get("props"),
+                subject_constraints=subject_constraints,
+                shot_type=shot_type,
             )
             end_out = self.image_dir / f"shot_{shot_id:03d}_end.png"
             async with self.sem:
@@ -2021,6 +2292,7 @@ class AssetGenerator:
                     end_prompt, shot_id, output_path=end_out,
                     characters_in_shot=characters_in_shot,
                     scene_image=scene_image,
+                    style_reference_image=style_reference_frame,
                 )
             if continuity_mode == "strict":
                 logger.info(f"shot_{shot_id}: continuity_mode=strict，生成尾帧图作为终点锚")
@@ -2033,6 +2305,7 @@ class AssetGenerator:
 
         # ── 构建结构化视频 prompt（使用全局提取的 video_action_prompt） ──
         video_prompt = VideoPromptBuilder.build_video_prompt(
+            style_anchor=style_anchor,
             character_appearances=char_appearances,
             action_description=video_action_text,
             motion_control=motion_control,
@@ -2040,6 +2313,8 @@ class AssetGenerator:
             consistency_anchors=consistency_anchors,
             narration=narration,
             scene_environment=scene_context.get("environment_description", ""),
+            subject_constraints=subject_constraints,
+            shot_type=shot_type,
         )
 
         # ── Seedance I2V：首帧 + 尾帧 + prompt → 视频片段 ──
@@ -2310,7 +2585,15 @@ class AssetGenerator:
             logger.warning(f"Seedance 异常: {e}")
             return False
 
-    async def _generate_image(self, prompt: str, shot_id: int, output_path: Path | None = None, characters_in_shot: list[str] | None = None, scene_image: Path | None = None) -> tuple[Path, str]:
+    async def _generate_image(
+        self,
+        prompt: str,
+        shot_id: int,
+        output_path: Path | None = None,
+        characters_in_shot: list[str] | None = None,
+        scene_image: Path | None = None,
+        style_reference_image: Path | None = None,
+    ) -> tuple[Path, str]:
         """生成图片。同一模型重试最多 3 次，不切换到其他风格不同的模型。"""
         out = output_path or (self.image_dir / f"shot_{shot_id:03d}.png")
         img_cfg = get_model_config("image")
@@ -2320,8 +2603,20 @@ class AssetGenerator:
 
         if self.use_api:
             dispatch = {
-                "volcengine": lambda p, o: self._image_volcengine(p, o, characters_in_shot=characters_in_shot or [], scene_image=scene_image),
-                "apimart": lambda p, o: self._image_apimart(p, o, characters_in_shot=characters_in_shot or [], scene_image=scene_image),
+                "volcengine": lambda p, o: self._image_volcengine(
+                    p,
+                    o,
+                    characters_in_shot=characters_in_shot or [],
+                    scene_image=scene_image,
+                    style_reference_image=style_reference_image,
+                ),
+                "apimart": lambda p, o: self._image_apimart(
+                    p,
+                    o,
+                    characters_in_shot=characters_in_shot or [],
+                    scene_image=scene_image,
+                    style_reference_image=style_reference_image,
+                ),
                 "fal": lambda p, o: self._image_flux(p, o),
             }
             for provider in fallback_chain:
@@ -2340,7 +2635,14 @@ class AssetGenerator:
         self._placeholder_image(out, shot_id, prompt)
         return out, "placeholder"
 
-    async def _image_volcengine(self, prompt: str, output: Path, characters_in_shot: list[str] | None = None, scene_image: Path | None = None) -> bool:
+    async def _image_volcengine(
+        self,
+        prompt: str,
+        output: Path,
+        characters_in_shot: list[str] | None = None,
+        scene_image: Path | None = None,
+        style_reference_image: Path | None = None,
+    ) -> bool:
         """Volcengine Seedream 图像生成（支持角色参考图）。"""
         img_cfg = get_model_config("image").get("volcengine", {})
         creds = get_api_credentials("volcengine", self.cfg)
@@ -2364,6 +2666,11 @@ class AssetGenerator:
         if scene_image and scene_image.exists():
             mime = mimetypes.guess_type(str(scene_image))[0] or "image/png"
             img_b64 = base64.b64encode(scene_image.read_bytes()).decode()
+            image_urls.append(f"data:{mime};base64,{img_b64}")
+
+        if style_reference_image and style_reference_image.exists():
+            mime = mimetypes.guess_type(str(style_reference_image))[0] or "image/png"
+            img_b64 = base64.b64encode(style_reference_image.read_bytes()).decode()
             image_urls.append(f"data:{mime};base64,{img_b64}")
 
         try:
@@ -2394,7 +2701,14 @@ class AssetGenerator:
             logger.warning(f"volcengine 失败: {e}")
         return False
 
-    async def _image_apimart(self, prompt: str, output: Path, characters_in_shot: list[str] | None = None, scene_image: Path | None = None) -> bool:
+    async def _image_apimart(
+        self,
+        prompt: str,
+        output: Path,
+        characters_in_shot: list[str] | None = None,
+        scene_image: Path | None = None,
+        style_reference_image: Path | None = None,
+    ) -> bool:
         """ApiMart 图像生成 — Gemini 模型走 chat/completions，其他走 images/generations。"""
         img_cfg = get_model_config("image").get("apimart", {})
         creds = get_api_credentials("apimart", self.cfg)
@@ -2416,7 +2730,7 @@ class AssetGenerator:
                     ref_dir = self.storyboard.get("character_ref_dir", "")
 
                     has_refs = False
-                    if (chars_to_use and ref_dir) or scene_image:
+                    if (chars_to_use and ref_dir) or scene_image or style_reference_image:
                         user_content = []
 
                         # 场景参考图（纯环境，同场景共享的视觉基底）
@@ -2424,6 +2738,13 @@ class AssetGenerator:
                             mime = mimetypes.guess_type(str(scene_image))[0] or "image/png"
                             img_b64 = base64.b64encode(scene_image.read_bytes()).decode()
                             user_content.append({"type": "text", "text": "SCENE REFERENCE — This is the environment/background. Place characters INTO this exact scene. Keep the same architecture, lighting, weather, and props."})
+                            user_content.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{img_b64}"}})
+                            has_refs = True
+
+                        if style_reference_image and style_reference_image.exists():
+                            mime = mimetypes.guess_type(str(style_reference_image))[0] or "image/png"
+                            img_b64 = base64.b64encode(style_reference_image.read_bytes()).decode()
+                            user_content.append({"type": "text", "text": "STYLE CONTINUITY REFERENCE — Preserve the same character rendering, face identity, material treatment, and overall visual medium from this prior shot. Keep stylistic continuity, but DO NOT copy its composition or background literally."})
                             user_content.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{img_b64}"}})
                             has_refs = True
 
@@ -2450,6 +2771,11 @@ class AssetGenerator:
                             instruction += (
                                 "Use the SCENE REFERENCE image as the environment base — keep the same buildings, bridge, pavilion, landscape, lighting, and weather. "
                                 "Place the characters INTO this environment. "
+                            )
+                        if style_reference_image and style_reference_image.exists():
+                            instruction += (
+                                "Use the STYLE CONTINUITY REFERENCE to keep the same character medium, face identity, texture treatment, and overall look across scene boundaries. "
+                                "This reference is for style continuity only; do not duplicate its framing or environment. "
                             )
                         instruction += (
                             "CRITICAL RULES: "
