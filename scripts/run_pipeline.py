@@ -81,11 +81,11 @@ def run_checked(command: list[str]) -> None:
     subprocess.run(command, check=True)
 
 
-def infer_legacy_shot_type(shot: dict[str, Any]) -> str:
+def infer_legacy_shot_type(shot: dict[str, Any]) -> tuple[str, str]:
     """为旧 storyboard 保守回填 shot_type，避免新协议直接阻断老项目。"""
     continuity_mode = str(shot.get("continuity_mode", "")).strip()
     if continuity_mode == "free":
-        return "free_atmosphere"
+        return "free_atmosphere", 'continuity_mode="free"'
 
     subject_constraints = shot.get("subject_constraints")
     if isinstance(subject_constraints, dict):
@@ -93,12 +93,15 @@ def infer_legacy_shot_type(shot: dict[str, Any]) -> str:
         continuity = subject_constraints.get("continuity_subjects", [])
         required_visible = subject_constraints.get("required_visible_subjects", [])
         if isinstance(offscreen, list) and any(str(item).strip() for item in offscreen):
-            return "offscreen_reaction"
+            return "offscreen_reaction", 'subject_constraints.offscreen_subjects is non-empty'
         if isinstance(continuity, list) and any(str(item).strip() for item in continuity):
             if isinstance(required_visible, list) and any(str(item).strip() for item in required_visible):
-                return "transition_reveal"
+                return "transition_reveal", (
+                    "subject_constraints.continuity_subjects and "
+                    "subject_constraints.required_visible_subjects are both non-empty"
+                )
 
-    return "visible_subject"
+    return "visible_subject", "fallback default for legacy storyboard"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -195,7 +198,7 @@ def normalize_storyboard(
     storyboard_path: Path,
     output_dir: Path,
     character_ref_dir: Path | None,
-) -> Path:
+) -> tuple[Path, Path]:
     storyboard = read_json(storyboard_path)
     normalized_dir = ensure_dir(output_dir / "_normalized")
     binding_report: dict[str, Any] = {
@@ -203,6 +206,16 @@ def normalize_storyboard(
         "character_ref_dir": str(character_ref_dir) if character_ref_dir else None,
         "characters": {},
         "shot_type_backfilled": [],
+    }
+    migration_report: dict[str, Any] = {
+        "storyboard": str(storyboard_path),
+        "normalized_storyboard": None,
+        "character_ref_dir": str(character_ref_dir) if character_ref_dir else None,
+        "summary": {
+            "shot_count": 0,
+            "shot_type_backfilled_count": 0,
+        },
+        "shot_migrations": [],
     }
 
     if character_ref_dir:
@@ -259,22 +272,44 @@ def normalize_storyboard(
             for shot in shots:
                 if not isinstance(shot, dict):
                     continue
-                if str(shot.get("shot_type", "")).strip():
+                migration_report["summary"]["shot_count"] += 1
+                original_shot_type = str(shot.get("shot_type", "")).strip() or None
+                shot_id = shot.get("id")
+                scene_id = scene.get("id")
+                migration_entry: dict[str, Any] = {
+                    "shot_id": shot_id,
+                    "scene_id": scene_id,
+                    "original_shot_type": original_shot_type,
+                    "final_shot_type": original_shot_type,
+                    "subject_constraints_present": isinstance(shot.get("subject_constraints"), dict),
+                    "notes": [],
+                }
+                if original_shot_type:
+                    migration_entry["notes"].append("shot_type already present; kept as-is")
+                    migration_report["shot_migrations"].append(migration_entry)
                     continue
-                inferred = infer_legacy_shot_type(shot)
+                inferred, reason = infer_legacy_shot_type(shot)
                 shot["shot_type"] = inferred
+                migration_entry["final_shot_type"] = inferred
+                migration_entry["notes"].append(f"backfilled shot_type because {reason}")
                 binding_report["shot_type_backfilled"].append(
                     {
-                        "shot_id": shot.get("id"),
-                        "scene_id": scene.get("id"),
+                        "shot_id": shot_id,
+                        "scene_id": scene_id,
                         "inferred_shot_type": inferred,
+                        "reason": reason,
                     }
                 )
+                migration_report["summary"]["shot_type_backfilled_count"] += 1
+                migration_report["shot_migrations"].append(migration_entry)
 
     normalized_path = normalized_dir / "storyboard.json"
+    migration_report_path = normalized_dir / "storyboard_migration_report.json"
+    migration_report["normalized_storyboard"] = str(normalized_path)
     write_json(normalized_path, storyboard)
     write_json(normalized_dir / "ref_binding_report.json", binding_report)
-    return normalized_path
+    write_json(migration_report_path, migration_report)
+    return normalized_path, migration_report_path
 
 
 def main() -> None:
@@ -342,8 +377,14 @@ def main() -> None:
             "manifest": str(character_ref_dir / "character_refs.json"),
         }
 
-    normalized_storyboard_path = normalize_storyboard(storyboard_path, output_root, character_ref_dir)
+    normalized_storyboard_path, migration_report_path = normalize_storyboard(storyboard_path, output_root, character_ref_dir)
     result["normalized_storyboard"] = str(normalized_storyboard_path)
+    if migration_report_path.exists():
+        migration_payload = read_json(migration_report_path)
+        result["storyboard_migration"] = {
+            "report_path": str(migration_report_path),
+            "summary": migration_payload.get("summary", {}),
+        }
 
     assets_manifest_path: Path | None = explicit_assets_manifest
     if stage_enabled(args, "assets"):
