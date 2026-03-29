@@ -14,12 +14,39 @@ description: "视频生成 skill。对话驱动的端到端视频生成流程：
 
 **视频质量检测标准：** 在检查单个 shot、分析风险片段、执行视觉裁定、以及整片复检时，必须参考 [reference/video_quality_standard.md](/Users/huangzongning/openclaw/skills/xyz-video-skill/reference/video_quality_standard.md)。不要只依据数值异常判断，必须按标准文件中的维度逐项检查。
 
+**当前 skill 的关键协议已经升级：**
+
+- `storyboard.json` 现在不是旧的松散 shot 列表，而是以 `scenes > shots` 为主结构
+- 每个 shot 默认应该显式包含：
+  - `shot_type`
+  - `subject_constraints`
+  - `continuity_mode`
+  - `chain_from_previous`
+- legacy storyboard 会在执行时被 `run_pipeline.py` 规范化到 `_normalized/storyboard.json`
+- 规范化过程会输出 `_normalized/storyboard_migration_report.json`
+
+**当前成片流程已经不是“素材生成完直接合成”那么简单，而是：**
+
+1. 分镜生成
+2. 角色参考图生成
+3. 图片/视频素材生成
+4. 视频质量粗筛
+5. 母模型视觉裁定
+6. pair-level 编辑决策
+7. FFmpeg 合成
+
+也就是说：
+- 质量审查是主流程的一部分
+- 编辑决策也是主流程的一部分
+- 不能再把 compose 理解成“按每个 shot 的 transition_in 直接拼起来”
+
 ```
 步骤1: 故事创作            → 你与用户对话讨论方向，输出 story.json
 步骤2: 剧本框架 + 角色设计  → 你思考，输出 framework.json（从 narrative 切分 scenes + 设计角色）
 步骤3: 角色参考图生成        → python3 scripts/ad_assets.py --mode character_refs
 步骤4: 分镜脚本            → 你思考，输出 storyboard.json（scenes > shots，从 narrative 派生）
-步骤5: 素材生成 + 视频合成   → python3 scripts/ad_assets.py → python3 scripts/ad_compose.py
+步骤5: 素材生成 + 质量审查   → python3 scripts/ad_assets.py
+步骤6: 编辑决策 + 视频合成   → python3 scripts/ad_compose.py
 ```
 
 **输出目录约定：** 所有文件输出到同一个目录，如 `~/video-output/20260319_143022/`。
@@ -227,6 +254,24 @@ python3 ad_assets.py --mode character_refs --framework framework.json --output_d
 
 每个 scene 和 shot 都必须标注 `narrative_segment`，直接引用 narrative 中的对应段落。scene_prompt / action_prompt / end_frame_description 三个字段都从 narrative_segment 派生，不凭空创造内容。
 
+**⚠️ 当前必须额外考虑两个层面的结构化约束：**
+
+1. `shot_type`
+- `visible_subject`
+- `offscreen_reaction`
+- `transition_reveal`
+- `free_atmosphere`
+
+2. `subject_constraints`
+- `required_visible_subjects`
+- `optional_visible_subjects`
+- `offscreen_subjects`
+- `continuity_subjects`
+- `forbidden_visible_subjects`
+- `semantic_rules`
+
+这两个字段不是注释，它们会直接进入图片 prompt、视频 prompt、质量审查和后续编辑决策。
+
 **输出 JSON → `{output_dir}/storyboard.json`：**
 
 ```json
@@ -271,8 +316,17 @@ python3 ad_assets.py --mode character_refs --framework framework.json --output_d
                     "tts_text": "",
                     "subtitle": "",
                     "estimated_duration": 8,
+                    "shot_type": "visible_subject",
                     "chain_from_previous": false,
                     "continuity_mode": "scene_end",
+                    "subject_constraints": {
+                        "required_visible_subjects": ["character_id_1"],
+                        "optional_visible_subjects": ["character_id_2"],
+                        "offscreen_subjects": [],
+                        "continuity_subjects": ["character_id_1"],
+                        "forbidden_visible_subjects": [],
+                        "semantic_rules": ["Keep the action semantically continuous within this shot."]
+                    },
                     "motion_control": {
                         "subject_facing": "away_from_camera",
                         "camera_relation": "rear_three_quarter",
@@ -295,6 +349,26 @@ python3 ad_assets.py --mode character_refs --framework framework.json --output_d
     ]
 }
 ```
+
+### 4.x 当前分镜额外约束
+
+- `shot_type` 必须当成生成策略字段，而不是普通标签
+- `offscreen_reaction` shot 必须明确写清楚谁不能露出
+- `transition_reveal` shot 必须明确写清楚 reveal 前后谁要保持连续
+- 对多人强交互镜头，`action_prompt` 和 `motion_control.phase_beats` 必须能表达一条连续动作链
+- 如果这是同一时刻的连续切镜，要用 `chain_from_previous=true`
+- 如果只是同场景连续动作但不是同一视觉时刻，不要滥用 `chain_from_previous`
+
+### 4.x 当前视频 prompt 的额外 guardrails
+
+当镜头属于多人强交互 shot 时，系统现在会自动在视频 prompt 里加入负向规则，压制以下错误：
+
+- 中途脱离交战再返回
+- 同一 shot 内把一次连续交锋变成两次独立交锋
+- 重置距离、方位、战场位置
+- 攻击者 / 防御者方向逻辑崩坏
+
+所以你在写 `action_prompt` 时，不要只写“有什么动作”，还要确保 narrative 本身能支持“动作关系连续”。
 
 ### 4.1 场景（Scene）层级 — 视觉基底共享
 

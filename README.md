@@ -12,10 +12,20 @@
 当前仓库已经覆盖的核心能力：
 
 - `story.json` → `framework.json` → `storyboard.json` 的 skill 工作流约束
+- `storyboard.json` 的新协议字段：
+  - `shot_type`
+  - `subject_constraints`
+  - `continuity_mode`
+  - `chain_from_previous`
+  - `keyframes`
 - 角色参考图生成
 - 镜头图片 / 视频 / BGM 素材生成
 - 品牌化处理（Logo、字幕条、水印、产品贴图）
 - 多平台视频合成（竖版 / 方版 / 横版）
+- **storyboard 兼容迁移层**：
+  - `run_pipeline.py` 会在 `_normalized/storyboard.json` 中回填 legacy storyboard 缺失的 `shot_type`
+  - 同时输出 `_normalized/storyboard_migration_report.json`
+  - `pipeline_result.json` 会暴露 `storyboard_migration.summary`
 - **连续性控制策略**：通过 `continuity_mode` 字段控制尾帧生成
   - `strict`：关键镜头强约束终点（情绪转折、状态大变化）
   - `scene_end`：默认行为，仅 scene 末尾生成尾帧
@@ -29,15 +39,41 @@
     - 局部突变检测（spike detection，捕捉面部变形/画面撕裂）
     - 人脸变形检测（OpenCV DNN，追踪人脸置信度骤降）
     - HOG 人体检测（检测重复角色/identity hallucination）
+    - 按 camera movement 自动选择质量 profile：`static` / `medium_motion` / `heavy_motion`
     - 导出风险片段和关键帧到 `vision_bundle`
   - **阶段2 - LLM 视觉判断**：
     - LLM 查看风险帧图片，做最终裁定
-    - 支持两种模式：
-      - 默认：母模型（当前对话 LLM）手动判断
-      - 可选：调用外部 API 自动判断（需配置 `use_external_api: true`）
-    - 决策规则：问题片段 < 50% → 裁剪，≥ 50% → 重新生成
-    - 自动合并相邻问题片段（间隔 < 0.5s）
-  - **状态追踪**：`audited` → `pending_judgment` → `judged` → `applied/finalized`
+    - 默认由当前 skill 对话中的母模型做人审式最终裁定
+    - 外部 `vision_judge.py` 现在只是可选工程化接口，不是默认主路径
+    - 支持 `keep` / `cut_segment` / `regenerate`
+  - **状态追踪**：
+    - `audited`
+    - `pending_judgment`
+    - `judged`
+    - `applied`
+    - `finalized`
+- **视频 prompt 约束增强**：
+  - `shot_type` / `subject_constraints` 已正式接入图片和视频 prompt
+  - 对多人强交互 shot，会自动追加 interaction guardrails，抑制“脱离交战再返回”等长时逻辑错误
+- **pair-level 编辑决策层**：
+  - 合成前会为每对相邻 shot 生成 `edit_decisions.json`
+  - 决策字段包括：
+    - `pair_type`
+    - `confidence`
+    - `trim_in`
+    - `trim_out`
+    - `transition_type`
+    - `transition_candidates`
+  - 当前已支持的语义类型包括：
+    - `same_moment_overlap`
+    - `continuous_action_same_scene`
+    - `reverse_shot_same_scene`
+    - `reaction_cut`
+    - `impact_cut`
+    - `scene_transition_soft`
+    - `scene_transition_hard`
+  - compose 会先执行 pair-level 裁边，再执行转场
+  - 支持通过 `--edit_judgments` 让母模型覆盖场景转场候选的最终选择
 
 当前仓库还没有覆盖的能力：
 
@@ -171,6 +207,7 @@ python3 scripts/run_pipeline.py \
 
 - 校验 JSON
 - 生成角色参考图
+- 标准化 storyboard（输出 migration report）
 - 生成素材
 - 可选品牌化
 - 合成视频
@@ -299,6 +336,8 @@ python3 scripts/ad_assets.py \
 - `assets/audit/shot_XXX/quality_audit.json` - 审计报告
 - `assets/audit/shot_XXX/vision_bundle_attempt_N/` - 风险帧图片
 - `assets/audit/shot_XXX/vision_bundle_attempt_N/vision_judge_request.json` - 判断请求
+- `assets/audit/shot_XXX/raw_attempt_N.mp4` - 原始视频
+- `assets/audit/shot_XXX/trimmed_attempt_N.mp4` - 裁剪后视频（如果有）
 
 ### 阶段2：LLM 视觉判断
 
@@ -328,18 +367,11 @@ python3 scripts/ad_assets.py \
 
 3. 重新运行生成流程，系统会读取判断结果并执行决策
 
-**外部 API 模式**：
+补充说明：
 
-在 `config/providers.yaml` 中配置：
-
-```yaml
-vision_judge:
-  use_external_api: true
-  provider: apimart
-  model: gpt-4o
-```
-
-系统会自动调用外部 API 完成判断。
+- 当前默认主路径是“规则粗筛 + 母模型视觉裁定”
+- `vision_judge.py` 和外部 API 只作为后续自动化接口，不是默认强依赖
+- `hybrid_judge` 模式下，素材阶段会在 `pending_judgment` 停住，等待母模型裁定后再继续执行
 
 ### 离线重新审计
 
@@ -369,10 +401,60 @@ python3 scripts/re_audit_videos.py \
 - `story.json`
 - `framework.json`
 - `storyboard.json`
+- `_normalized/storyboard.json`
+- `_normalized/storyboard_migration_report.json`
 - `character_refs/`
 - `assets/assets.json`
+- `assets/audit/`
 - `brand/brand_manifest.json`
 - `videos/*.mp4`
+- `videos/edit_decisions.json`
+
+## Edit Decisions
+
+`scripts/ad_compose.py` 现在不再只是按每个 shot 自己的 `transition_in` 硬拼。
+
+它会先做 pair-level 编辑判断，再决定如何裁边和衔接：
+
+- 输入信号：
+  - `scene` 边界
+  - `chain_from_previous`
+  - `characters_in_shot`
+  - `narrative_segment`
+  - 视频边界视觉重叠估计
+- 输出文件：
+  - `edit_decisions.json`
+- 典型字段：
+  - `pair_type`
+  - `confidence`
+  - `trim_out`
+  - `trim_in`
+  - `transition_type`
+  - `transition_candidates`
+  - `judgment_applied`
+
+如果你想让母模型覆盖场景转场选择：
+
+```bash
+python3 scripts/ad_compose.py \
+  --storyboard /path/to/storyboard.json \
+  --assets /path/to/assets.json \
+  --edit_judgments /path/to/edit_judgments.json \
+  --output_dir /path/to/output/videos
+```
+
+`edit_judgments.json` 示例：
+
+```json
+[
+  {
+    "from_shot": 2,
+    "to_shot": 3,
+    "transition_type": "flash-white",
+    "transition_duration": 0.12
+  }
+]
+```
 
 ## OpenClaw Integration
 
@@ -387,10 +469,9 @@ python3 scripts/re_audit_videos.py \
 
 ## Known Gaps
 
-- 还没有单入口 orchestrator
-- 还没有强 schema 校验
 - `templates/` 仍有历史迭代遗留
 - `examples/sample_output/` 是历史样例，不是当前严格输出合同
+- `README.md` / `SKILL.md` 需要持续和协议、审查流程、编辑决策层一起维护
 
 ## Recommended Next Steps
 
