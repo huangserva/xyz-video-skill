@@ -251,6 +251,79 @@ class VideoPromptBuilder:
             parts.append(f"  Rule: {rule}")
 
     @staticmethod
+    def _is_high_interaction_video_shot(
+        character_appearances: list[tuple[str, str]],
+        action_description: str,
+        motion_control: dict[str, Any] | None = None,
+        camera_movement: str = "",
+    ) -> bool:
+        """判断是否属于需要加强动作逻辑约束的高交互镜头。"""
+        if len(character_appearances) < 2:
+            return False
+
+        text_parts = [str(action_description or "").lower(), str(camera_movement or "").lower()]
+        if isinstance(motion_control, dict):
+            phase_beats = motion_control.get("phase_beats", [])
+            if isinstance(phase_beats, list):
+                text_parts.extend(str(item).lower() for item in phase_beats if str(item).strip())
+            for key in ("target", "movement_direction", "screen_trajectory", "distance_to_target"):
+                value = motion_control.get(key, "")
+                if str(value).strip():
+                    text_parts.append(str(value).lower())
+
+        text_blob = " ".join(text_parts)
+        interaction_tokens = [
+            "fight", "combat", "battle", "attack", "counter", "dodge", "strike", "hit",
+            "pounce", "lunge", "chase", "grapple", "clash", "collision", "tackle",
+            "打", "打斗", "交锋", "搏斗", "扑", "扑击", "扑向", "闪避", "反击", "追击", "对打",
+        ]
+        return any(token in text_blob for token in interaction_tokens)
+
+    @staticmethod
+    def _append_interaction_negative_rules(
+        parts: list[str],
+        character_appearances: list[tuple[str, str]],
+        action_description: str,
+        motion_control: dict[str, Any] | None = None,
+        camera_movement: str = "",
+        subject_constraints: dict[str, Any] | None = None,
+    ) -> None:
+        """为多人强交互镜头补充统一的负向规则模板。"""
+        if not VideoPromptBuilder._is_high_interaction_video_shot(
+            character_appearances=character_appearances,
+            action_description=action_description,
+            motion_control=motion_control,
+            camera_movement=camera_movement,
+        ):
+            return
+
+        rules = [
+            "Keep the action as one continuous causal sequence within this shot.",
+            "Do NOT let any subject disengage from the interaction unless the storyboard explicitly requires it.",
+            "Do NOT turn one continuous clash into two separate encounters within the same shot.",
+            "Do NOT reset distance, battlefield position, or attack cycle mid-shot.",
+            "Do NOT send one subject running away in a different direction and then suddenly return to combat without a visible transition.",
+            "Preserve attacker-defender directional logic across the full shot.",
+        ]
+
+        continuity_subjects = []
+        if isinstance(subject_constraints, dict):
+            value = subject_constraints.get("continuity_subjects", [])
+            if isinstance(value, list):
+                continuity_subjects = [str(item).strip() for item in value if str(item).strip()]
+        if continuity_subjects:
+            rules.append(
+                "Keep these continuity-bound subjects semantically consistent throughout the shot: "
+                + ", ".join(continuity_subjects)
+                + "."
+            )
+
+        parts.append("")
+        parts.append("【交互连续性负向规则】")
+        for idx, rule in enumerate(rules, start=1):
+            parts.append(f"{idx}. {rule}")
+
+    @staticmethod
     def build_image_prompt(
         style_anchor: str,
         character_appearances: list[tuple[str, str]],
@@ -494,6 +567,15 @@ class VideoPromptBuilder:
         if scene_environment:
             parts.append(f"【场景环境】{scene_environment}")
         parts.append(f"【场景动作】{prompt_body}")
+
+        VideoPromptBuilder._append_interaction_negative_rules(
+            parts,
+            character_appearances=character_appearances,
+            action_description=clean_action,
+            motion_control=motion_control,
+            camera_movement=camera_movement,
+            subject_constraints=subject_constraints,
+        )
 
         # 规则
         parts.append("")

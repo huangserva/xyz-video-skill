@@ -13,12 +13,374 @@ import json
 import logging
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
+
+from PIL import Image
 
 from utils import config_dir, read_yaml, setup_logging, write_json
 
 logger = logging.getLogger(__name__)
+OVERLAP_SCORE_THRESHOLD = 0.30
+
+
+def _flatten_shots(storyboard: dict[str, Any]) -> list[dict[str, Any]]:
+    """支持 scenes > shots 嵌套格式，向下兼容 flat shots。"""
+    scenes = storyboard.get("scenes", [])
+    if scenes:
+        shots: list[dict[str, Any]] = []
+        for scene in scenes:
+            scene_id = scene.get("id")
+            for shot in scene.get("shots", []):
+                if isinstance(shot, dict):
+                    enriched = dict(shot)
+                    enriched["_scene_id"] = scene_id
+                    shots.append(enriched)
+        return shots
+    return list(storyboard.get("shots", []))
+
+
+def _normalize_transition_type(raw: str | None) -> str:
+    value = str(raw or "").strip().lower()
+    if value in {"", "straight-cut", "straight_cut", "hard-cut", "hard_cut", "cut"}:
+        return "straight-cut"
+    if value in {"cross-dissolve", "cross_dissolve", "dissolve"}:
+        return "cross-dissolve"
+    if value in {"flash-white", "flash_white", "white-flash", "white_flash"}:
+        return "flash-white"
+    return value or "straight-cut"
+
+
+def _clean_text(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def _shot_characters(shot: dict[str, Any]) -> set[str]:
+    value = shot.get("characters_in_shot", [])
+    if isinstance(value, list):
+        return {str(item).strip() for item in value if str(item).strip()}
+    return set()
+
+
+def _has_any_token(text: str, tokens: list[str]) -> bool:
+    return any(token in text for token in tokens)
+
+
+def _pair_default_strategy(pair_type: str) -> tuple[str, float]:
+    mapping = {
+        "same_moment_overlap": ("straight-cut", 0.0),
+        "continuous_action_same_scene": ("straight-cut", 0.0),
+        "reverse_shot_same_scene": ("straight-cut", 0.0),
+        "reaction_cut": ("straight-cut", 0.0),
+        "impact_cut": ("straight-cut", 0.0),
+        "scene_transition_soft": ("cross-dissolve", 0.25),
+        "scene_transition_hard": ("straight-cut", 0.0),
+        "scene_transition": ("cross-dissolve", 0.25),
+    }
+    return mapping.get(pair_type, ("straight-cut", 0.0))
+
+
+def _pair_transition_candidates(pair_type: str) -> list[dict[str, Any]]:
+    mapping: dict[str, list[tuple[str, float, str]]] = {
+        "same_moment_overlap": [
+            ("straight-cut", 0.0, "Same-moment overlap should usually cut directly after trimming duplicate motion."),
+        ],
+        "continuous_action_same_scene": [
+            ("straight-cut", 0.0, "Continuous action in the same scene usually plays best as a direct cut."),
+            ("cross-dissolve", 0.12, "Use only if the cut still feels visually abrupt after trimming."),
+        ],
+        "reverse_shot_same_scene": [
+            ("straight-cut", 0.0, "Reverse shots usually need a crisp conversational or action eyeline cut."),
+        ],
+        "reaction_cut": [
+            ("straight-cut", 0.0, "Reaction cuts are usually strongest as direct cuts."),
+            ("cross-dissolve", 0.10, "Use sparingly if mood is softer than impact-driven."),
+        ],
+        "impact_cut": [
+            ("straight-cut", 0.10, "Impact beats usually benefit from a hard cut with minimal delay."),
+            ("flash-white", 0.12, "Use for stylized impact emphasis before or during a violent beat."),
+        ],
+        "scene_transition_soft": [
+            ("cross-dissolve", 0.25, "Soft scene transition for reflective or gradual narrative flow."),
+            ("straight-cut", 0.0, "Use if the narrative shift is clear enough without smoothing."),
+        ],
+        "scene_transition_hard": [
+            ("straight-cut", 0.10, "Hard scene transition for forceful narrative shift."),
+            ("flash-white", 0.12, "Use when the new scene should hit like a shock or impact reveal."),
+        ],
+        "scene_transition": [
+            ("cross-dissolve", 0.25, "Default soft scene transition."),
+            ("straight-cut", 0.0, "Use if the narrative intent is sharper than reflective."),
+        ],
+    }
+    candidates = mapping.get(pair_type, [("straight-cut", 0.0, "Default direct cut.")])
+    return [
+        {
+            "transition_type": transition_type,
+            "transition_duration": duration,
+            "reason": reason,
+        }
+        for transition_type, duration, reason in candidates
+    ]
+
+
+def _load_edit_judgments(path: Path | None) -> dict[tuple[int, int], dict[str, Any]]:
+    if not path or not path.exists():
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    items = payload if isinstance(payload, list) else payload.get("judgments", [])
+    result: dict[tuple[int, int], dict[str, Any]] = {}
+    if not isinstance(items, list):
+        return result
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        try:
+            key = (int(item["from_shot"]), int(item["to_shot"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        result[key] = item
+    return result
+
+
+def _explicit_transition_allowed_for_pair(pair_type: str, transition_type: str) -> bool:
+    """只有当显式转场不违背语义时，才允许覆盖 pair 策略。"""
+    if pair_type == "same_moment_overlap":
+        return False
+    if pair_type in {"reverse_shot_same_scene", "reaction_cut", "impact_cut"}:
+        return transition_type == "straight-cut"
+    if pair_type == "continuous_action_same_scene":
+        return transition_type in {"straight-cut", "cross-dissolve"}
+    if pair_type in {"scene_transition_soft", "scene_transition", "scene_transition_hard"}:
+        return True
+    return True
+
+
+def _classify_pair_type(
+    prev_shot: dict[str, Any],
+    next_shot: dict[str, Any],
+    same_scene: bool,
+    chain: bool,
+    visual_overlap_score: float,
+) -> tuple[str, float]:
+    prev_chars = _shot_characters(prev_shot)
+    next_chars = _shot_characters(next_shot)
+    shared_chars = prev_chars & next_chars
+    prev_only = prev_chars - next_chars
+    next_only = next_chars - prev_chars
+
+    prev_text = " ".join(
+        [
+            _clean_text(prev_shot.get("narrative_segment")),
+            _clean_text(prev_shot.get("action_prompt")),
+            _clean_text(prev_shot.get("scene_prompt")),
+        ]
+    )
+    next_text = " ".join(
+        [
+            _clean_text(next_shot.get("narrative_segment")),
+            _clean_text(next_shot.get("action_prompt")),
+            _clean_text(next_shot.get("scene_prompt")),
+        ]
+    )
+    pair_text = f"{prev_text} {next_text}"
+
+    reaction_tokens = ["听", "看向", "注视", "侧耳", "reaction", "reacts", "listens", "looks at", "turns to"]
+    impact_tokens = ["猛然", "突然", "瞬间", "扑", "撞", "砸", "attack", "impact", "slam", "pounce", "lunge", "collision"]
+
+    if same_scene and chain and visual_overlap_score >= OVERLAP_SCORE_THRESHOLD:
+        confidence = 0.82 + (0.15 * visual_overlap_score)
+        return "same_moment_overlap", confidence
+
+    if same_scene:
+        if shared_chars and prev_only and next_only:
+            return "reverse_shot_same_scene", 0.88
+        if _has_any_token(next_text, reaction_tokens):
+            return "reaction_cut", 0.85
+        if _has_any_token(pair_text, impact_tokens):
+            return "impact_cut", 0.84
+        return "continuous_action_same_scene", 0.82
+
+    if _has_any_token(pair_text, ["与此同时", "随后", "然后", "afterward", "meanwhile", "later"]):
+        return "scene_transition_soft", 0.9
+    if _has_any_token(pair_text, impact_tokens):
+        return "scene_transition_hard", 0.9
+    return "scene_transition_soft", 0.92
+
+
+def _extract_boundary_frames(
+    video_path: Path,
+    start_time: float,
+    duration: float,
+    fps: int = 8,
+) -> list[tuple[float, Path]]:
+    """从视频边界抽取少量缩略帧，用于重叠相似度估计。"""
+    if duration <= 0:
+        return []
+    with tempfile.TemporaryDirectory(prefix="edit_frames_") as tmp:
+        tmp_dir = Path(tmp)
+        pattern = tmp_dir / "frame_%03d.png"
+        cmd = [
+            "ffmpeg", "-y",
+            "-ss", f"{max(0.0, start_time):.3f}",
+            "-i", str(video_path),
+            "-t", f"{duration:.3f}",
+            "-vf", f"fps={fps},scale=160:90:force_original_aspect_ratio=decrease,pad=160:90:(ow-iw)/2:(oh-ih)/2",
+            str(pattern),
+        ]
+        try:
+            subprocess.run(cmd, check=True, capture_output=True)
+        except subprocess.CalledProcessError:
+            return []
+
+        frames: list[tuple[float, Path]] = []
+        for idx, frame_path in enumerate(sorted(tmp_dir.glob("frame_*.png"))):
+            persisted = video_path.parent / f".{video_path.stem}_editprobe_{idx:03d}.png"
+            shutil.copy2(frame_path, persisted)
+            timestamp = start_time + (idx / fps)
+            frames.append((timestamp, persisted))
+        return frames
+
+
+def _frame_mse(frame_a: Path, frame_b: Path) -> float:
+    with Image.open(frame_a) as img_a, Image.open(frame_b) as img_b:
+        a = list(img_a.convert("RGB").getdata())
+        b = list(img_b.convert("RGB").getdata())
+    if len(a) != len(b) or not a:
+        return 1e9
+    diff = 0.0
+    for px_a, px_b in zip(a, b):
+        diff += (
+            (px_a[0] - px_b[0]) ** 2 +
+            (px_a[1] - px_b[1]) ** 2 +
+            (px_a[2] - px_b[2]) ** 2
+        ) / 3.0
+    return diff / len(a)
+
+
+def _estimate_overlap_window(prev_video: Path, next_video: Path) -> tuple[float, float, float]:
+    """估计前后镜头的重叠区，返回 trim_out, trim_in, overlap_score。"""
+    prev_duration = _get_duration(prev_video)
+    next_duration = _get_duration(next_video)
+    window = min(0.75, prev_duration, next_duration)
+    if window <= 0.08:
+        return 0.0, 0.0, 0.0
+
+    prev_frames = _extract_boundary_frames(prev_video, max(0.0, prev_duration - window), window)
+    next_frames = _extract_boundary_frames(next_video, 0.0, window)
+    if not prev_frames or not next_frames:
+        return 0.0, 0.0, 0.0
+
+    best: tuple[float, float, float] | None = None
+    for prev_time, prev_frame in prev_frames:
+        for next_time, next_frame in next_frames:
+            mse = _frame_mse(prev_frame, next_frame)
+            if best is None or mse < best[0]:
+                best = (mse, prev_time, next_time)
+
+    for _, frame_path in prev_frames + next_frames:
+        frame_path.unlink(missing_ok=True)
+
+    if best is None:
+        return 0.0, 0.0, 0.0
+
+    mse, prev_time, next_time = best
+    if mse > 1200:
+        return 0.0, 0.0, max(0.0, 1.0 - (mse / 5000.0))
+
+    trim_out = max(0.0, round(prev_duration - prev_time, 3))
+    trim_in = max(0.0, round(next_time, 3))
+    overlap_score = max(0.0, min(1.0, 1.0 - (mse / 1200.0)))
+    trim_out = min(trim_out, window)
+    trim_in = min(trim_in, window)
+    return trim_out, trim_in, overlap_score
+
+
+def build_edit_decisions(
+    storyboard: dict[str, Any],
+    assets: dict[str, Any],
+    edit_judgments: dict[tuple[int, int], dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """基于相邻 shot 关系生成编辑决策。"""
+    shots = _flatten_shots(storyboard)
+    videos = {int(vid["shot_id"]): Path(vid["path"]) for vid in assets.get("videos", []) if "shot_id" in vid and "path" in vid}
+    decisions: list[dict[str, Any]] = []
+
+    for prev_shot, next_shot in zip(shots, shots[1:]):
+        prev_id = int(prev_shot["id"])
+        next_id = int(next_shot["id"])
+        same_scene = prev_shot.get("_scene_id") == next_shot.get("_scene_id")
+        chain = bool(next_shot.get("chain_from_previous", False))
+        visual_overlap_score = 0.0
+        trim_out = 0.0
+        trim_in = 0.0
+
+        if same_scene and chain and prev_id in videos and next_id in videos:
+            trim_out, trim_in, visual_overlap_score = _estimate_overlap_window(videos[prev_id], videos[next_id])
+
+        pair_type, confidence = _classify_pair_type(
+            prev_shot=prev_shot,
+            next_shot=next_shot,
+            same_scene=same_scene,
+            chain=chain,
+            visual_overlap_score=visual_overlap_score,
+        )
+
+        if pair_type == "same_moment_overlap" and trim_out <= 0.01 and trim_in <= 0.01:
+            trim_out = 0.12
+            trim_in = 0.08
+        elif pair_type != "same_moment_overlap":
+            trim_out = 0.0
+            trim_in = 0.0
+
+        transition_type, transition_duration = _pair_default_strategy(pair_type)
+        transition_candidates = _pair_transition_candidates(pair_type)
+
+        explicit_transition = next_shot.get("transition_in")
+        if isinstance(explicit_transition, dict):
+            explicit_type = _normalize_transition_type(explicit_transition.get("type"))
+            explicit_duration = float(explicit_transition.get("duration", transition_duration) or transition_duration)
+            if _explicit_transition_allowed_for_pair(pair_type, explicit_type):
+                transition_type = explicit_type
+                transition_duration = explicit_duration
+        elif isinstance(explicit_transition, str) and explicit_transition.strip():
+            explicit_type = _normalize_transition_type(explicit_transition)
+            if _explicit_transition_allowed_for_pair(pair_type, explicit_type):
+                transition_type = explicit_type
+
+        judgment = (edit_judgments or {}).get((prev_id, next_id))
+        if judgment:
+            chosen_type = _normalize_transition_type(judgment.get("transition_type", transition_type))
+            allowed_types = {item["transition_type"] for item in transition_candidates}
+            if chosen_type in allowed_types:
+                transition_type = chosen_type
+                transition_duration = float(judgment.get("transition_duration", transition_duration) or transition_duration)
+
+        decision = {
+            "from_shot": prev_id,
+            "to_shot": next_id,
+            "pair_type": pair_type,
+            "confidence": round(max(0.0, min(1.0, confidence)), 3),
+            "signals": {
+                "same_scene": same_scene,
+                "chain_from_previous": chain,
+                "visual_overlap_score": round(visual_overlap_score, 3),
+                "prev_scene": prev_shot.get("_scene_id"),
+                "next_scene": next_shot.get("_scene_id"),
+                "shared_characters": sorted(_shot_characters(prev_shot) & _shot_characters(next_shot)),
+            },
+            "trim_out": round(trim_out, 3),
+            "trim_in": round(trim_in, 3),
+            "transition_type": transition_type,
+            "transition_duration": round(transition_duration, 3),
+            "transition_candidates": transition_candidates,
+            "judgment_applied": bool(judgment),
+            "needs_human_review": confidence < 0.7,
+        }
+        decisions.append(decision)
+
+    return decisions
 
 
 async def compose_all(
@@ -26,10 +388,12 @@ async def compose_all(
     assets: dict[str, Any],
     output_dir: Path,
     platforms: list[str],
-) -> dict[str, str]:
+    edit_judgments: dict[tuple[int, int], dict[str, Any]] | None = None,
+) -> tuple[dict[str, str], list[dict[str, Any]]]:
     """按平台列表合成视频。"""
     platforms_cfg = read_yaml(config_dir() / "platforms.yaml")
     videos = {}
+    edit_decisions = build_edit_decisions(storyboard, assets, edit_judgments=edit_judgments)
 
     for platform_key, spec in platforms_cfg.get("platforms", {}).items():
         if platform_key not in platforms:
@@ -37,6 +401,7 @@ async def compose_all(
         video_path = await _compose_video(
             storyboard=storyboard,
             assets=assets,
+            edit_decisions=edit_decisions,
             output_dir=output_dir,
             platform=platform_key,
             width=spec["width"],
@@ -46,12 +411,13 @@ async def compose_all(
             videos[platform_key] = str(video_path)
             logger.info(f"合成完成: {platform_key} → {video_path}")
 
-    return videos
+    return videos, edit_decisions
 
 
 async def _compose_video(
     storyboard: dict[str, Any],
     assets: dict[str, Any],
+    edit_decisions: list[dict[str, Any]],
     output_dir: Path,
     platform: str,
     width: int,
@@ -67,28 +433,29 @@ async def _compose_video(
 
     images = {img["shot_id"]: img for img in assets.get("images", [])}
     videos = {vid["shot_id"]: vid for vid in assets.get("videos", [])}
-
-    # 支持 scenes > shots 嵌套格式，向下兼容 flat shots
-    shots = []
-    scenes = storyboard.get("scenes", [])
-    if scenes:
-        for scene in scenes:
-            shots.extend(scene.get("shots", []))
-    else:
-        shots = storyboard.get("shots", [])
+    shots = _flatten_shots(storyboard)
+    decisions_by_from = {int(item["from_shot"]): item for item in edit_decisions}
+    decisions_by_to = {int(item["to_shot"]): item for item in edit_decisions}
 
     for shot in shots:
         shot_id = shot["id"]
         seg_path = output_dir / f"seg_{shot_id}.mp4"
         duration = shot.get("estimated_duration", shot.get("duration", 5))
+        trim_in = float(decisions_by_to.get(int(shot_id), {}).get("trim_in", 0.0) or 0.0)
+        trim_out = float(decisions_by_from.get(int(shot_id), {}).get("trim_out", 0.0) or 0.0)
 
         # 优先使用 Seedance 生成的视频片段
         vid = videos.get(shot_id)
         if vid:
             vid_path = Path(vid["path"])
             if vid_path.exists():
+                source_duration = _get_duration(vid_path)
+                keep_duration = max(0.2, source_duration - trim_in - trim_out)
                 cmd = [
-                    "ffmpeg", "-y", "-i", str(vid_path),
+                    "ffmpeg", "-y",
+                    "-ss", f"{trim_in:.3f}",
+                    "-i", str(vid_path),
+                    "-t", f"{keep_duration:.3f}",
                     "-vf", f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}",
                     "-c:v", "libx264", "-pix_fmt", "yuv420p",
                     "-c:a", "aac", str(seg_path),
@@ -110,9 +477,10 @@ async def _compose_video(
         if not img_path.exists():
             continue
 
+        still_duration = max(0.2, float(duration) - trim_in - trim_out)
         cmd = [
             "ffmpeg", "-y", "-loop", "1", "-i", str(img_path),
-            "-t", str(duration),
+            "-t", f"{still_duration:.3f}",
             "-vf", f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}",
             "-c:v", "libx264", "-pix_fmt", "yuv420p", str(seg_path),
         ]
@@ -129,7 +497,15 @@ async def _compose_video(
 
     # 拼接片段（支持转场效果）
     merged = output_dir / f"{platform}_merged.mp4"
-    transitions = [shot.get("transition_in") for shot in shots]
+    transitions: list[dict[str, Any] | None] = [None]
+    for shot in shots[1:]:
+        decision = decisions_by_to.get(int(shot["id"]), {})
+        transitions.append(
+            {
+                "type": decision.get("transition_type", "straight-cut"),
+                "duration": decision.get("transition_duration", 0.0),
+            }
+        )
 
     merged = _merge_segments_with_transitions(segments, transitions, merged)
     if not merged:
@@ -197,9 +573,11 @@ def _merge_segments_with_transitions(
         if t is None:
             norm.append(("straight-cut", 0.0))
         elif isinstance(t, str):
-            norm.append((t, 0.3 if t != "straight-cut" else 0.0))
+            t_norm = _normalize_transition_type(t)
+            norm.append((t_norm, 0.3 if t_norm != "straight-cut" else 0.0))
         elif isinstance(t, dict):
-            norm.append((t.get("type", "straight-cut"), t.get("duration", 0.3)))
+            t_norm = _normalize_transition_type(t.get("type", "straight-cut"))
+            norm.append((t_norm, t.get("duration", 0.3)))
         else:
             norm.append(("straight-cut", 0.0))
 
@@ -382,6 +760,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--storyboard", required=True, help="storyboard.json 路径")
     parser.add_argument("--assets", required=True, help="assets.json 路径")
     parser.add_argument("--output_dir", required=True, help="视频输出目录")
+    parser.add_argument("--edit_judgments", help="可选的母基模转场裁定 JSON 路径")
     parser.add_argument("--platform", nargs="*", default=["youtube"], help="目标平台（youtube douyin wechat）")
     parser.add_argument("--verbose", action="store_true", help="详细日志")
     return parser
@@ -392,18 +771,25 @@ async def _async_main(args: argparse.Namespace) -> None:
         storyboard = json.load(f)
     with open(Path(args.assets).expanduser().resolve(), encoding="utf-8") as f:
         assets = json.load(f)
+    edit_judgments = _load_edit_judgments(Path(args.edit_judgments).expanduser().resolve()) if args.edit_judgments else {}
 
     output_dir = Path(args.output_dir).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    videos = await compose_all(
+    videos, edit_decisions = await compose_all(
         storyboard=storyboard,
         assets=assets,
         output_dir=output_dir,
         platforms=args.platform,
+        edit_judgments=edit_judgments,
     )
 
-    result = {"videos": videos, "output_dir": str(output_dir)}
+    write_json(output_dir / "edit_decisions.json", edit_decisions)
+    result = {
+        "videos": videos,
+        "output_dir": str(output_dir),
+        "edit_decisions_path": str(output_dir / "edit_decisions.json"),
+    }
     write_json(output_dir / "result.json", result)
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
