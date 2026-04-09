@@ -143,6 +143,7 @@ class AssetGenerator:
         use_api: bool = True,
         review_mode: str | None = None,
         video_only: bool = False,
+        resume: bool = False,
     ):
         self.storyboard = storyboard
         self.output_root = output_root
@@ -150,6 +151,9 @@ class AssetGenerator:
         self.image_height = image_height
         self.use_api = use_api
         self.video_only = video_only  # 调试模式：跳过图片生成
+        self.resume = resume
+        self.checkpoint_path = output_root / ".checkpoint.json"
+        self._session: aiohttp.ClientSession | None = None
         self.sem = asyncio.Semaphore(parallel)
 
         self.image_dir = output_root / "images"
@@ -168,6 +172,52 @@ class AssetGenerator:
             logger.warning(f"未知 review_mode={self.review_mode}，回退到 metrics_only")
             self.review_mode = "metrics_only"
         self.director_prompts = self._load_director_prompts()
+
+    # ── Checkpoint (断点续传) ──────────────────────────────────────
+
+    def _load_checkpoint(self) -> dict[str, Any] | None:
+        if not self.resume or not self.checkpoint_path.exists():
+            return None
+        try:
+            data = json.loads(self.checkpoint_path.read_text(encoding="utf-8"))
+            completed = data.get("completed_shot_ids", [])
+            logger.info(f"加载 checkpoint: 已完成 {len(completed)} 个 shot ({completed})")
+            return data
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(f"checkpoint 文件损坏，忽略: {e}")
+            return None
+
+    def _save_checkpoint(
+        self,
+        completed_shot_ids: list[int],
+        shot_results: list[dict[str, Any]],
+        previous_video_path: str | None,
+    ) -> None:
+        data = {
+            "completed_shot_ids": completed_shot_ids,
+            "shot_results": shot_results,
+            "previous_video_path": previous_video_path,
+        }
+        tmp = self.checkpoint_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(self.checkpoint_path)
+
+    def _clear_checkpoint(self) -> None:
+        self.checkpoint_path.unlink(missing_ok=True)
+
+    # ── aiohttp Session 复用 ──────────────────────────────────────
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=300),
+            )
+        return self._session
+
+    async def close(self) -> None:
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self._session = None
 
     def _video_fallback_chain(self) -> list[str]:
         video_cfg = get_model_config("video")
@@ -513,10 +563,20 @@ class AssetGenerator:
         # ── 全局 prompt 提取：一次性为所有 shot 生成首帧/尾帧/动作 prompt ──
         extracted_prompts = await self._extract_all_shot_prompts(all_shots)
 
-        # 串行处理：按 scene > shots 顺序
-        shot_results = []
-        pending_reviews: list[dict[str, Any]] = []
+        # ── 断点续传：加载 checkpoint ──
+        checkpoint = self._load_checkpoint()
+        completed_shot_ids: set[int] = set()
+        shot_results: list[dict[str, Any]] = []
         previous_video_path: Path | None = None
+        if checkpoint:
+            completed_shot_ids = set(checkpoint.get("completed_shot_ids", []))
+            shot_results = checkpoint.get("shot_results", [])
+            prev_path = checkpoint.get("previous_video_path")
+            if prev_path and Path(prev_path).exists():
+                previous_video_path = Path(prev_path)
+
+        # 串行处理：按 scene > shots 顺序
+        pending_reviews: list[dict[str, Any]] = []
         shot_index = 0
         pause_pipeline = False
 
@@ -558,6 +618,18 @@ class AssetGenerator:
                 is_last_in_scene = (i == len(scene_shots) - 1)
                 continuity_mode = shot.get("continuity_mode", "scene_end")
                 shot_id = int(shot.get("id", 0))
+
+                # 断点续传：跳过已完成的 shot
+                if shot_id in completed_shot_ids:
+                    # 恢复 previous_video_path 以维持 chain_from_previous
+                    for prev_r in shot_results:
+                        if isinstance(prev_r.get("image"), dict) and int(prev_r["image"].get("shot_id", -1)) == shot_id:
+                            if "video" in prev_r:
+                                previous_video_path = Path(prev_r["video"]["path"])
+                            break
+                    logger.info(f"shot_{shot_id}: 已在 checkpoint 中，跳过")
+                    continue
+
                 scene_context["scene_continuity"] = self._resolve_scene_continuity_for_shot(
                     scene_context.get("scene_continuity_raw", {}),
                     shot_id,
@@ -794,6 +866,12 @@ class AssetGenerator:
                     logger.info(f"{shot_id_str}: 质量审查日志 → {audit_json}")
 
                 shot_results.append(result)
+                completed_shot_ids.add(shot_id)
+                self._save_checkpoint(
+                    completed_shot_ids=sorted(completed_shot_ids),
+                    shot_results=shot_results,
+                    previous_video_path=str(previous_video_path) if previous_video_path else None,
+                )
 
                 # 提取尾帧供同场景链式使用
                 if "video" in result:
@@ -818,6 +896,7 @@ class AssetGenerator:
         ]
 
         if pending_reviews:
+            # 有待审阅项目时不清 checkpoint（可能需要继续）
             return {
                 "generated_at": timestamp_id(),
                 "asset_root": str(self.output_root),
@@ -833,6 +912,9 @@ class AssetGenerator:
         duration = int(self.storyboard.get("total_duration", 60))
         bgm_style = str(self.storyboard.get("bgm_style", "upbeat"))
         bgm_path, bgm_provider = await self._generate_bgm(bgm_style, duration)
+
+        # 全部完成，清理 checkpoint
+        self._clear_checkpoint()
 
         return {
             "generated_at": timestamp_id(),
@@ -952,7 +1034,8 @@ class AssetGenerator:
                     img = Image.open(ff).convert("RGB")
                     frames.append(img)
                     frame_arrays.append(np.asarray(img, dtype=np.float32))
-                except Exception:
+                except Exception as e:
+                    logger.warning(f"质量检测: 帧 {ff.name} 加载失败: {e}")
                     continue
 
             if len(frames) < 6:
@@ -1323,9 +1406,9 @@ class AssetGenerator:
                                 if face_trim < keep_time:
                                     result["analysis"]["face_dnn_warning_time"] = face_trim
             except ImportError:
-                pass  # cv2 不可用，跳过人脸检测
+                logger.warning("质量检测: cv2 不可用，跳过 DNN 人脸检测")
             except Exception as e:
-                logger.debug(f"质量检测: 人脸检测跳过 ({e})")
+                logger.warning(f"质量检测: DNN 人脸检测失败: {e}")
 
             top_diff_indices = sorted(range(len(diffs)), key=lambda idx: diffs[idx], reverse=True)[:5]
             result["analysis"]["top_diffs"] = [
@@ -1441,7 +1524,8 @@ class AssetGenerator:
             diff = cv2.absdiff(gray_a, gray_b)
             mean_diff = float(diff.mean())
             return max(0.0, 1.0 - mean_diff / 255.0)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"灰度 MSE 相似度计算失败: {e}")
             return 0.0
 
     @staticmethod
@@ -1462,7 +1546,8 @@ class AssetGenerator:
             hist_score = float(cv2.compareHist(hist_a, hist_b, cv2.HISTCMP_CORREL))
             hist_score = max(0.0, min(1.0, (hist_score + 1.0) / 2.0))
             return 0.6 * gray_score + 0.4 * hist_score
-        except Exception:
+        except Exception as e:
+            logger.warning(f"人脸裁切身份评分失败: {e}")
             return 0.0
 
     @staticmethod
@@ -1537,7 +1622,8 @@ class AssetGenerator:
             net = cv2.dnn.readNetFromCaffe(str(proto), str(weights))
             frontal = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
             profile = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_profileface.xml")
-        except Exception:
+        except Exception as e:
+            logger.warning(f"朝向检测: 模型加载失败: {e}")
             return []
 
         sample_interval = max(3, int(round(fps / 8)))
@@ -1555,7 +1641,8 @@ class AssetGenerator:
                     ["ffmpeg", "-i", str(video_path), "-vf", "scale=480:-1", f"{face_td}/f%05d.png", "-loglevel", "error"],
                     check=True,
                 )
-            except Exception:
+            except Exception as e:
+                logger.warning(f"朝向检测: 帧提取失败: {e}")
                 return []
 
             person_hog = cv2.HOGDescriptor()
@@ -1822,7 +1909,7 @@ class AssetGenerator:
 
             logger.info(f"质量审查: 关键帧截图已保存 → {audit_dir}/{prefix}_*.png")
         except Exception as e:
-            logger.debug(f"质量审查: 截图保存失败 ({e})")
+            logger.warning(f"质量审查: 截图保存失败: {e}")
 
     @staticmethod
     def _trim_video_at(video_path: Path, end_time: float, min_remaining: float = 3.0) -> Path:
@@ -1875,7 +1962,8 @@ class AssetGenerator:
                 text=True,
             )
             duration = float(probe.stdout.strip())
-        except Exception:
+        except Exception as e:
+            logger.warning(f"cut_segment: ffprobe 时长获取失败: {e}")
             return video_path
 
         remaining = duration - (end_time - start_time)
@@ -1944,7 +2032,8 @@ class AssetGenerator:
                 )
                 if frame_path.exists():
                     extracted.append(str(frame_path))
-            except Exception:
+            except Exception as e:
+                logger.warning(f"帧提取失败 @{t:.2f}s: {e}")
                 frame_path.unlink(missing_ok=True)
         return extracted
 
@@ -2811,18 +2900,19 @@ class AssetGenerator:
                 "temperature": 0.3,
                 "stream": False,
             }
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as session:
-                async with session.post(
-                    f"{creds['api_base']}/chat/completions",
-                    headers=headers,
-                    json=payload,
-                ) as resp:
-                    if resp.status != 200:
-                        body = await resp.text()
-                        logger.warning(f"全局 prompt 提取失败 ({resp.status}): {body[:200]}，fallback")
-                        return fallback
-                    data = await resp.json()
-                    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            session = await self._get_session()
+            async with session.post(
+                f"{creds['api_base']}/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=timeout),
+            ) as resp:
+                if resp.status != 200:
+                    body = await resp.text()
+                    logger.warning(f"全局 prompt 提取失败 ({resp.status}): {body[:200]}，fallback")
+                    return fallback
+                data = await resp.json()
+                content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
 
             if not content:
                 logger.warning("全局 prompt 提取：LLM 返回空内容，fallback")
@@ -2880,7 +2970,7 @@ class AssetGenerator:
             logger.info(f"全局 prompt 提取完成: {len(result)} shots")
             return result
 
-        except Exception as e:
+        except (aiohttp.ClientError, asyncio.TimeoutError, json.JSONDecodeError, KeyError, ValueError) as e:
             logger.warning(f"全局 prompt 提取异常: {e}，fallback")
             return fallback
 
@@ -3590,69 +3680,68 @@ class AssetGenerator:
                 payload["execution_expires_after"] = 86400
 
             submit_timeout = pcfg.get("submit_timeout", 30)
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=submit_timeout)) as session:
-                async with session.post(
-                    f"{api_base}/contents/generations/tasks",
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json=payload,
-                ) as resp:
-                    if resp.status != 200:
-                        body = await resp.text()
-                        logger.warning(f"Seedance 提交失败 ({resp.status}): {body[:200]}")
-                        return False
-                    data = await resp.json()
-                    task_id = data.get("id")
-                    if not task_id:
-                        logger.warning(f"Seedance 返回无 task_id: {data}")
-                        return False
-                    mode_tag = " [batch]" if batch_mode else ""
-                    logger.info(f"Seedance{mode_tag} 任务已提交: {task_id}")
+            session = await self._get_session()
+            async with session.post(
+                f"{api_base}/contents/generations/tasks",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=submit_timeout),
+            ) as resp:
+                if resp.status != 200:
+                    body = await resp.text()
+                    logger.warning(f"Seedance 提交失败 ({resp.status}): {body[:200]}")
+                    return False
+                data = await resp.json()
+                task_id = data.get("id")
+                if not task_id:
+                    logger.warning(f"Seedance 返回无 task_id: {data}")
+                    return False
+                mode_tag = " [batch]" if batch_mode else ""
+                logger.info(f"Seedance{mode_tag} 任务已提交: {task_id}")
 
             poll_timeout = pcfg.get("poll_timeout", 15)
             poll_interval = pcfg.get("poll_interval", 5)
             default_poll_max = 720 if batch_mode else 60
             poll_max = pcfg.get("poll_max_attempts", default_poll_max)
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=poll_timeout)) as session:
-                for attempt in range(poll_max):
-                    await asyncio.sleep(poll_interval)
-                    async with session.get(
-                        f"{api_base}/contents/generations/tasks/{task_id}",
-                        headers={"Authorization": f"Bearer {api_key}"},
-                    ) as resp:
-                        if resp.status != 200:
-                            continue
-                        result = await resp.json()
-                        status = result.get("status", "")
+            for attempt in range(poll_max):
+                await asyncio.sleep(poll_interval)
+                async with session.get(
+                    f"{api_base}/contents/generations/tasks/{task_id}",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    timeout=aiohttp.ClientTimeout(total=poll_timeout),
+                ) as resp:
+                    if resp.status != 200:
+                        continue
+                    result = await resp.json()
+                    status = result.get("status", "")
 
-                        if status == "succeeded":
-                            video_url = (result.get("content") or {}).get("video_url")
-                            if video_url:
-                                logger.info(f"Seedance 生成成功，下载视频...")
-                                # 用独立 session 下载视频，避免 poll_timeout 过短导致下载超时
-                                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=300)) as dl_session:
-                                    return await self._download(
-                                        dl_session, video_url, output
-                                    )
-                            logger.warning("Seedance 成功但无 video_url")
-                            return False
+                    if status == "succeeded":
+                        video_url = (result.get("content") or {}).get("video_url")
+                        if video_url:
+                            logger.info(f"Seedance 生成成功，下载视频...")
+                            return await self._download(
+                                session, video_url, output
+                            )
+                        logger.warning("Seedance 成功但无 video_url")
+                        return False
 
-                        if status in ("failed", "cancelled"):
-                            error = result.get("error")
-                            logger.warning(f"Seedance 任务 {status}: {error}")
-                            return False
+                    if status in ("failed", "cancelled"):
+                        error = result.get("error")
+                        logger.warning(f"Seedance 任务 {status}: {error}")
+                        return False
 
-                        # running / pending — 继续等
-                        if attempt % 6 == 0:
-                            elapsed = attempt * poll_interval
-                            logger.info(f"Seedance{mode_tag} 生成中... ({elapsed}s)")
+                    # running / pending — 继续等
+                    if attempt % 6 == 0:
+                        elapsed = attempt * poll_interval
+                        logger.info(f"Seedance{mode_tag} 生成中... ({elapsed}s)")
 
             logger.warning(f"Seedance 超时（{poll_max * poll_interval}s）")
             return False
 
-        except Exception as e:
+        except (aiohttp.ClientError, asyncio.TimeoutError, KeyError, ValueError, OSError) as e:
             logger.warning(f"Seedance 异常: {e}")
             return False
 
@@ -3773,19 +3862,20 @@ class AssetGenerator:
             if image_urls:
                 payload["image_urls"] = image_urls
 
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as session:
-                async with session.post(
-                    f"{creds['api_base']}/images/generations",
-                    headers={"Authorization": f"Bearer {creds['api_key']}", "Content-Type": "application/json"},
-                    json=payload,
-                ) as resp:
-                    if resp.status != 200:
-                        return False
-                    data = await resp.json()
-                    url = data.get("data", [{}])[0].get("url")
-                    if url:
-                        return await self._download(session, url, output)
-        except Exception as e:
+            session = await self._get_session()
+            async with session.post(
+                f"{creds['api_base']}/images/generations",
+                headers={"Authorization": f"Bearer {creds['api_key']}", "Content-Type": "application/json"},
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=timeout),
+            ) as resp:
+                if resp.status != 200:
+                    return False
+                data = await resp.json()
+                url = data.get("data", [{}])[0].get("url")
+                if url:
+                    return await self._download(session, url, output)
+        except (aiohttp.ClientError, asyncio.TimeoutError, KeyError, ValueError, OSError) as e:
             logger.warning(f"volcengine 失败: {e}")
         return False
 
@@ -3810,182 +3900,184 @@ class AssetGenerator:
         try:
             timeout = img_cfg.get("timeout", 180)
             headers = {"Authorization": f"Bearer {creds['api_key']}", "Content-Type": "application/json"}
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as session:
-                if is_gemini:
-                    # 构建多模态 content：场景参考图 + 角色参考图 + 道具参考图 + 结构化 prompt
-                    user_content: list[dict] | str = []
-                    characters_cfg = self.storyboard.get("characters", {})
-                    prop_cfg = self.storyboard.get("prop_refs", {})
-                    chars_to_use = characters_in_shot or []
-                    ref_dir = self.storyboard.get("character_ref_dir", "")
+            session = await self._get_session()
+            if is_gemini:
+                # 构建多模态 content：场景参考图 + 角色参考图 + 道具参考图 + 结构化 prompt
+                user_content: list[dict] | str = []
+                characters_cfg = self.storyboard.get("characters", {})
+                prop_cfg = self.storyboard.get("prop_refs", {})
+                chars_to_use = characters_in_shot or []
+                ref_dir = self.storyboard.get("character_ref_dir", "")
 
-                    has_refs = False
-                    if (chars_to_use and ref_dir) or scene_image or style_reference_image:
-                        user_content = []
+                has_refs = False
+                if (chars_to_use and ref_dir) or scene_image or style_reference_image:
+                    user_content = []
 
-                        # 场景参考图（纯环境，同场景共享的视觉基底）
-                        if scene_image and scene_image.exists():
-                            mime = mimetypes.guess_type(str(scene_image))[0] or "image/png"
-                            img_b64 = base64.b64encode(scene_image.read_bytes()).decode()
-                            user_content.append({"type": "text", "text": "场景参考图——这是当前镜头的环境与背景基底。请把人物放入这张场景中，保持建筑、地形、光线、天气和空间关系一致。"})
-                            user_content.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{img_b64}"}})
-                            has_refs = True
+                    # 场景参考图（纯环境，同场景共享的视觉基底）
+                    if scene_image and scene_image.exists():
+                        mime = mimetypes.guess_type(str(scene_image))[0] or "image/png"
+                        img_b64 = base64.b64encode(scene_image.read_bytes()).decode()
+                        user_content.append({"type": "text", "text": "场景参考图——这是当前镜头的环境与背景基底。请把人物放入这张场景中，保持建筑、地形、光线、天气和空间关系一致。"})
+                        user_content.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{img_b64}"}})
+                        has_refs = True
 
-                        if style_reference_image and style_reference_image.exists():
-                            mime = mimetypes.guess_type(str(style_reference_image))[0] or "image/png"
-                            img_b64 = base64.b64encode(style_reference_image.read_bytes()).decode()
-                            user_content.append({"type": "text", "text": "风格连续性参考图——保持同一种人物绘制媒介、面部身份、材质处理和整体视觉媒介，但不要直接复制它的构图和背景。"})
-                            user_content.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{img_b64}"}})
-                            has_refs = True
+                    if style_reference_image and style_reference_image.exists():
+                        mime = mimetypes.guess_type(str(style_reference_image))[0] or "image/png"
+                        img_b64 = base64.b64encode(style_reference_image.read_bytes()).decode()
+                        user_content.append({"type": "text", "text": "风格连续性参考图——保持同一种人物绘制媒介、面部身份、材质处理和整体视觉媒介，但不要直接复制它的构图和背景。"})
+                        user_content.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{img_b64}"}})
+                        has_refs = True
 
-                        # 角色参考图
-                        if chars_to_use and ref_dir:
-                            ref_base = Path(ref_dir)
-                            for char_id in chars_to_use:
-                                char_info = characters_cfg.get(char_id, {})
-                                ref_file = char_info.get("ref_image", "")
-                                ref_desc = char_info.get("ref_description", char_info.get("appearance", ""))
-                                ref_path = ref_base / ref_file if ref_file else None
+                    # 角色参考图
+                    if chars_to_use and ref_dir:
+                        ref_base = Path(ref_dir)
+                        for char_id in chars_to_use:
+                            char_info = characters_cfg.get(char_id, {})
+                            ref_file = char_info.get("ref_image", "")
+                            ref_desc = char_info.get("ref_description", char_info.get("appearance", ""))
+                            ref_path = ref_base / ref_file if ref_file else None
 
-                                if ref_path and ref_path.exists():
-                                    mime = mimetypes.guess_type(str(ref_path))[0] or "image/png"
-                                    img_b64 = base64.b64encode(ref_path.read_bytes()).decode()
-                                    user_content.append({"type": "text", "text": f"角色参考图——{char_id}: {ref_desc}"})
-                                    user_content.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{img_b64}"}})
-                                    has_refs = True
+                            if ref_path and ref_path.exists():
+                                mime = mimetypes.guess_type(str(ref_path))[0] or "image/png"
+                                img_b64 = base64.b64encode(ref_path.read_bytes()).decode()
+                                user_content.append({"type": "text", "text": f"角色参考图——{char_id}: {ref_desc}"})
+                                user_content.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{img_b64}"}})
+                                has_refs = True
 
-                        if isinstance(prop_cfg, dict):
-                            for prop_id in (props_in_shot or []):
-                                prop_info = prop_cfg.get(prop_id, {})
-                                if not isinstance(prop_info, dict):
-                                    continue
-                                ref_path_value = str(prop_info.get("ref_path", "")).strip()
-                                ref_desc = str(prop_info.get("ref_description", "") or prop_info.get("appearance", "")).strip()
-                                ref_path = Path(ref_path_value).expanduser() if ref_path_value else None
-                                if ref_path and ref_path.exists():
-                                    mime = mimetypes.guess_type(str(ref_path))[0] or "image/png"
-                                    img_b64 = base64.b64encode(ref_path.read_bytes()).decode()
-                                    user_content.append({"type": "text", "text": f"道具参考图——{prop_id}: {ref_desc}"})
-                                    user_content.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{img_b64}"}})
-                                    has_refs = True
+                    if isinstance(prop_cfg, dict):
+                        for prop_id in (props_in_shot or []):
+                            prop_info = prop_cfg.get(prop_id, {})
+                            if not isinstance(prop_info, dict):
+                                continue
+                            ref_path_value = str(prop_info.get("ref_path", "")).strip()
+                            ref_desc = str(prop_info.get("ref_description", "") or prop_info.get("appearance", "")).strip()
+                            ref_path = Path(ref_path_value).expanduser() if ref_path_value else None
+                            if ref_path and ref_path.exists():
+                                mime = mimetypes.guess_type(str(ref_path))[0] or "image/png"
+                                img_b64 = base64.b64encode(ref_path.read_bytes()).decode()
+                                user_content.append({"type": "text", "text": f"道具参考图——{prop_id}: {ref_desc}"})
+                                user_content.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{img_b64}"}})
+                                has_refs = True
 
-                        instruction = (
-                            "现在生成一张新的电影感镜头图片。"
-                        )
-                        if scene_image and scene_image.exists():
-                            instruction += (
-                                "使用场景参考图作为环境基底，保持同样的建筑、地形、山道、光线与天气，把人物放入这张环境中。"
-                            )
-                        if style_reference_image and style_reference_image.exists():
-                            instruction += (
-                                "使用风格连续性参考图来保持同一种人物媒介、面部身份、材质处理和整体视觉感受；这张图只用于风格连续，不用于复制原构图和原背景。"
-                            )
+                    instruction = (
+                        "现在生成一张新的电影感镜头图片。"
+                    )
+                    if scene_image and scene_image.exists():
                         instruction += (
-                            "关键要求："
-                            "1）人物身份必须与各自参考图一致；"
-                            "2）关键道具应与道具参考图一致；"
-                            "3）环境与场景参考图保持连续；"
-                            "4）不要出现任何文字、标签或注释；"
-                            "5）基于下面的提示词生成新的镜头构图。\\n\\n"
-                            f"{prompt}"
+                            "使用场景参考图作为环境基底，保持同样的建筑、地形、山道、光线与天气，把人物放入这张环境中。"
                         )
-                        user_content.append({"type": "text", "text": instruction})
+                    if style_reference_image and style_reference_image.exists():
+                        instruction += (
+                            "使用风格连续性参考图来保持同一种人物媒介、面部身份、材质处理和整体视觉感受；这张图只用于风格连续，不用于复制原构图和原背景。"
+                        )
+                    instruction += (
+                        "关键要求："
+                        "1）人物身份必须与各自参考图一致；"
+                        "2）关键道具应与道具参考图一致；"
+                        "3）环境与场景参考图保持连续；"
+                        "4）不要出现任何文字、标签或注释；"
+                        "5）基于下面的提示词生成新的镜头构图。\\n\\n"
+                        f"{prompt}"
+                    )
+                    user_content.append({"type": "text", "text": instruction})
 
-                        if not has_refs:
-                            user_content = f"生成一张图片：{prompt}"
-                    else:
+                    if not has_refs:
                         user_content = f"生成一张图片：{prompt}"
-
-                    payload = {
-                        "model": model,
-                        "messages": [
-                            {"role": "system", "content": GEMINI_IMAGE_SYSTEM_PROMPT},
-                            {"role": "user", "content": user_content}
-                        ],
-                        "max_tokens": 4096,
-                        "stream": False,
-                    }
-                    async with session.post(
-                        f"{creds['api_base']}/chat/completions",
-                        headers=headers,
-                        json=payload,
-                    ) as resp:
-                        if resp.status != 200:
-                            body = await resp.text()
-                            logger.warning(f"apimart gemini 返回 {resp.status}: {body[:200]}")
-                            return False
-                        data = await resp.json()
-                        # 从 choices[0].message.content 中提取图片
-                        choices = data.get("choices", [])
-                        if not choices:
-                            return False
-                        msg = choices[0].get("message", {})
-                        content = msg.get("content", "")
-
-                        # content 可能是 str 或 list（multimodal）
-                        if isinstance(content, str):
-                            # Gemini 返回 markdown 格式: ![image](data:image/jpeg;base64,...)
-                            import re
-                            m = re.search(r'data:image/[^;]+;base64,([A-Za-z0-9+/=\s]+)', content)
-                            if m:
-                                b64_str = m.group(1).replace('\n', '').replace(' ', '')
-                                output.write_bytes(base64.b64decode(b64_str))
-                                return True
-                            # 也可能直接返回 URL
-                            m_url = re.search(r'https?://\S+', content)
-                            if m_url:
-                                return await self._download(session, m_url.group(0), output)
-                            logger.warning(f"apimart gemini 返回内容无图片: {content[:200]}")
-                            return False
-                        if isinstance(content, list):
-                            for part in content:
-                                if isinstance(part, dict):
-                                    if part.get("type") == "image_url":
-                                        url_or_b64 = part.get("image_url", {}).get("url", "")
-                                        if url_or_b64.startswith("data:"):
-                                            b64_str = url_or_b64.split(",", 1)[1]
-                                            output.write_bytes(base64.b64decode(b64_str))
-                                            return True
-                                        elif url_or_b64.startswith("http"):
-                                            return await self._download(session, url_or_b64, output)
-                            return False
-                        return False
                 else:
-                    # 非 Gemini 模型走标准 images/generations 接口
-                    poll_interval = img_cfg.get("poll_interval", 5)
-                    poll_max = img_cfg.get("poll_max_attempts", 30)
-                    async with session.post(
-                        f"{creds['api_base']}/images/generations",
-                        headers=headers,
-                        json={"model": model, "prompt": prompt, "size": f"{self.image_width}x{self.image_height}", "n": 1},
-                    ) as resp:
-                        if resp.status != 200:
-                            return False
-                        data = await resp.json()
-                        first = data.get("data", [{}])[0]
+                    user_content = f"生成一张图片：{prompt}"
 
-                        # 异步任务模式
-                        if task_id := first.get("task_id"):
-                            for _ in range(poll_max):
-                                await asyncio.sleep(poll_interval)
-                                async with session.get(f"{creds['api_base']}/tasks/{task_id}", headers=headers) as poll:
-                                    if poll.status == 200:
-                                        task_data = await poll.json()
-                                        if task_data.get("data", {}).get("status") == "completed":
-                                            url_val = task_data.get("data", {}).get("result", {}).get("images", [{}])[0].get("url")
-                                            if isinstance(url_val, list):
-                                                url_val = url_val[0] if url_val else None
-                                            if url_val:
-                                                return await self._download(session, url_val, output)
-                            return False
+                payload = {
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": GEMINI_IMAGE_SYSTEM_PROMPT},
+                        {"role": "user", "content": user_content}
+                    ],
+                    "max_tokens": 4096,
+                    "stream": False,
+                }
+                async with session.post(
+                    f"{creds['api_base']}/chat/completions",
+                    headers=headers,
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=timeout),
+                ) as resp:
+                    if resp.status != 200:
+                        body = await resp.text()
+                        logger.warning(f"apimart gemini 返回 {resp.status}: {body[:200]}")
+                        return False
+                    data = await resp.json()
+                    # 从 choices[0].message.content 中提取图片
+                    choices = data.get("choices", [])
+                    if not choices:
+                        return False
+                    msg = choices[0].get("message", {})
+                    content = msg.get("content", "")
 
-                        # 同步模式
-                        url = first.get("url")
-                        if isinstance(url, list):
-                            url = url[0] if url else None
-                        if url:
-                            return await self._download(session, url, output)
-        except Exception as e:
+                    # content 可能是 str 或 list（multimodal）
+                    if isinstance(content, str):
+                        # Gemini 返回 markdown 格式: ![image](data:image/jpeg;base64,...)
+                        import re
+                        m = re.search(r'data:image/[^;]+;base64,([A-Za-z0-9+/=\s]+)', content)
+                        if m:
+                            b64_str = m.group(1).replace('\n', '').replace(' ', '')
+                            output.write_bytes(base64.b64decode(b64_str))
+                            return True
+                        # 也可能直接返回 URL
+                        m_url = re.search(r'https?://\S+', content)
+                        if m_url:
+                            return await self._download(session, m_url.group(0), output)
+                        logger.warning(f"apimart gemini 返回内容无图片: {content[:200]}")
+                        return False
+                    if isinstance(content, list):
+                        for part in content:
+                            if isinstance(part, dict):
+                                if part.get("type") == "image_url":
+                                    url_or_b64 = part.get("image_url", {}).get("url", "")
+                                    if url_or_b64.startswith("data:"):
+                                        b64_str = url_or_b64.split(",", 1)[1]
+                                        output.write_bytes(base64.b64decode(b64_str))
+                                        return True
+                                    elif url_or_b64.startswith("http"):
+                                        return await self._download(session, url_or_b64, output)
+                        return False
+                    return False
+            else:
+                # 非 Gemini 模型走标准 images/generations 接口
+                poll_interval = img_cfg.get("poll_interval", 5)
+                poll_max = img_cfg.get("poll_max_attempts", 30)
+                async with session.post(
+                    f"{creds['api_base']}/images/generations",
+                    headers=headers,
+                    json={"model": model, "prompt": prompt, "size": f"{self.image_width}x{self.image_height}", "n": 1},
+                    timeout=aiohttp.ClientTimeout(total=timeout),
+                ) as resp:
+                    if resp.status != 200:
+                        return False
+                    data = await resp.json()
+                    first = data.get("data", [{}])[0]
+
+                    # 异步任务模式
+                    if task_id := first.get("task_id"):
+                        for _ in range(poll_max):
+                            await asyncio.sleep(poll_interval)
+                            async with session.get(f"{creds['api_base']}/tasks/{task_id}", headers=headers) as poll:
+                                if poll.status == 200:
+                                    task_data = await poll.json()
+                                    if task_data.get("data", {}).get("status") == "completed":
+                                        url_val = task_data.get("data", {}).get("result", {}).get("images", [{}])[0].get("url")
+                                        if isinstance(url_val, list):
+                                            url_val = url_val[0] if url_val else None
+                                        if url_val:
+                                            return await self._download(session, url_val, output)
+                        return False
+
+                    # 同步模式
+                    url = first.get("url")
+                    if isinstance(url, list):
+                        url = url[0] if url else None
+                    if url:
+                        return await self._download(session, url, output)
+        except (aiohttp.ClientError, asyncio.TimeoutError, KeyError, ValueError, OSError) as e:
             logger.warning(f"apimart 失败: {e}")
         return False
 
@@ -4007,39 +4099,40 @@ class AssetGenerator:
         poll_interval = img_cfg.get("poll_interval", 1)
         poll_max = img_cfg.get("poll_max_attempts", 90)
         try:
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as session:
-                async with session.post(
-                    f"{creds['api_base']}/fal-ai/flux/schnell",
-                    headers={"Authorization": f"Key {creds['api_key']}", "Content-Type": "application/json"},
-                    json={
-                        "prompt": prompt,
-                        "image_size": {"width": self.image_width, "height": self.image_height},
-                        "num_inference_steps": img_cfg.get("num_inference_steps", 4),
-                        "num_images": img_cfg.get("num_images", 1),
-                    },
-                ) as resp:
-                    if resp.status != 200:
-                        return False
-                    data = await resp.json()
+            session = await self._get_session()
+            async with session.post(
+                f"{creds['api_base']}/fal-ai/flux/schnell",
+                headers={"Authorization": f"Key {creds['api_key']}", "Content-Type": "application/json"},
+                json={
+                    "prompt": prompt,
+                    "image_size": {"width": self.image_width, "height": self.image_height},
+                    "num_inference_steps": img_cfg.get("num_inference_steps", 4),
+                    "num_images": img_cfg.get("num_images", 1),
+                },
+                timeout=aiohttp.ClientTimeout(total=timeout),
+            ) as resp:
+                if resp.status != 200:
+                    return False
+                data = await resp.json()
 
-                    # 直接返回
-                    if data.get("images"):
-                        url = data["images"][0].get("url")
-                        if url:
-                            return await self._download(session, url, output)
+                # 直接返回
+                if data.get("images"):
+                    url = data["images"][0].get("url")
+                    if url:
+                        return await self._download(session, url, output)
 
-                    # 轮询模式
-                    if request_id := data.get("request_id"):
-                        for _ in range(poll_max):
-                            await asyncio.sleep(poll_interval)
-                            async with session.get(f"{creds['api_base']}/fal-ai/flux/schnell/requests/{request_id}", headers={"Authorization": f"Key {creds['api_key']}"}) as poll:
-                                if poll.status == 200:
-                                    result = await poll.json()
-                                    if result.get("images"):
-                                        url = result["images"][0].get("url")
-                                        if url:
-                                            return await self._download(session, url, output)
-        except Exception as e:
+                # 轮询模式
+                if request_id := data.get("request_id"):
+                    for _ in range(poll_max):
+                        await asyncio.sleep(poll_interval)
+                        async with session.get(f"{creds['api_base']}/fal-ai/flux/schnell/requests/{request_id}", headers={"Authorization": f"Key {creds['api_key']}"}) as poll:
+                            if poll.status == 200:
+                                result = await poll.json()
+                                if result.get("images"):
+                                    url = result["images"][0].get("url")
+                                    if url:
+                                        return await self._download(session, url, output)
+        except (aiohttp.ClientError, asyncio.TimeoutError, KeyError, ValueError, OSError) as e:
             logger.warning(f"flux 失败: {e}")
         return False
 
@@ -4063,7 +4156,7 @@ class AssetGenerator:
             voice = os.getenv("EDGE_TTS_VOICE", tts_cfg.get("voice", "zh-CN-XiaoxiaoNeural"))
             await edge_tts.Communicate(text=text, voice=voice).save(str(output))
             return output.exists() and output.stat().st_size > 0
-        except Exception as e:
+        except (ImportError, OSError, ValueError) as e:
             logger.warning(f"edge-tts 失败: {e}")
             return False
 
@@ -4089,42 +4182,43 @@ class AssetGenerator:
         poll_max = bgm_cfg.get("poll_max_attempts", 120)
         endpoint = bgm_cfg.get("endpoint", "/fal-ai/minimax-music/v2")
         try:
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as session:
-                async with session.post(
-                    f"{creds['api_base']}{endpoint}",
-                    headers={"Authorization": f"Key {creds['api_key']}", "Content-Type": "application/json"},
-                    json={"prompt": f"{style}, instrumental, no vocals", "lyrics_prompt": "[Instrumental]", "duration": duration},
-                ) as resp:
-                    if resp.status != 200:
-                        return False
-                    data = await resp.json()
+            session = await self._get_session()
+            async with session.post(
+                f"{creds['api_base']}{endpoint}",
+                headers={"Authorization": f"Key {creds['api_key']}", "Content-Type": "application/json"},
+                json={"prompt": f"{style}, instrumental, no vocals", "lyrics_prompt": "[Instrumental]", "duration": duration},
+                timeout=aiohttp.ClientTimeout(total=timeout),
+            ) as resp:
+                if resp.status != 200:
+                    return False
+                data = await resp.json()
 
-                    # 直接返回
-                    if audio := data.get("audio", {}).get("url"):
-                        return await self._download(session, audio, output)
+                # 直接返回
+                if audio := data.get("audio", {}).get("url"):
+                    return await self._download(session, audio, output)
 
-                    # 轮询
-                    poll_endpoint = endpoint.replace("/v2", "")
-                    if request_id := data.get("request_id"):
-                        for _ in range(poll_max):
-                            await asyncio.sleep(poll_interval)
-                            async with session.get(f"{creds['api_base']}{poll_endpoint}/requests/{request_id}", headers={"Authorization": f"Key {creds['api_key']}"}) as poll:
-                                if poll.status == 200:
-                                    result = await poll.json()
-                                    if audio := result.get("audio", {}).get("url"):
-                                        return await self._download(session, audio, output)
-        except Exception as e:
+                # 轮询
+                poll_endpoint = endpoint.replace("/v2", "")
+                if request_id := data.get("request_id"):
+                    for _ in range(poll_max):
+                        await asyncio.sleep(poll_interval)
+                        async with session.get(f"{creds['api_base']}{poll_endpoint}/requests/{request_id}", headers={"Authorization": f"Key {creds['api_key']}"}) as poll:
+                            if poll.status == 200:
+                                result = await poll.json()
+                                if audio := result.get("audio", {}).get("url"):
+                                    return await self._download(session, audio, output)
+        except (aiohttp.ClientError, asyncio.TimeoutError, KeyError, ValueError, OSError) as e:
             logger.warning(f"minimax 失败: {e}")
         return False
 
     async def _download(self, session: aiohttp.ClientSession, url: str, output: Path) -> bool:
         """下载文件。"""
         try:
-            async with session.get(url) as resp:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=300)) as resp:
                 if resp.status == 200:
                     output.write_bytes(await resp.read())
                     return output.exists() and output.stat().st_size > 0
-        except Exception as e:
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
             logger.warning(f"下载失败: {e}")
         return False
 
@@ -4161,6 +4255,17 @@ class CharacterRefGenerator:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.use_api = use_api
         self.cfg = load_external_api_config()
+        self._session: aiohttp.ClientSession | None = None
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=300))
+        return self._session
+
+    async def close(self) -> None:
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self._session = None
 
     @staticmethod
     def _sanitize_ref_text(text: str) -> str:
@@ -4327,53 +4432,54 @@ class CharacterRefGenerator:
         headers = {"Authorization": f"Bearer {creds['api_key']}", "Content-Type": "application/json"}
 
         try:
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as session:
-                if is_gemini:
-                    payload = {
-                        "model": model,
-                        "messages": [{"role": "user", "content": f"Generate an image: {prompt}"}],
-                        "max_tokens": 4096,
-                        "stream": False,
-                    }
-                    async with session.post(
-                        f"{creds['api_base']}/chat/completions",
-                        headers=headers,
-                        json=payload,
-                    ) as resp:
-                        if resp.status != 200:
-                            body = await resp.text()
-                            logger.warning(f"角色参考图生成失败 ({resp.status}): {body[:200]}")
-                            return False
-                        data = await resp.json()
-                        choices = data.get("choices", [])
-                        if not choices:
-                            return False
-                        content = choices[0].get("message", {}).get("content", "")
-                        if isinstance(content, str):
-                            import re
-                            m = re.search(r'data:image/[^;]+;base64,([A-Za-z0-9+/=\s]+)', content)
-                            if m:
-                                b64_str = m.group(1).replace('\n', '').replace(' ', '')
-                                output.write_bytes(base64.b64decode(b64_str))
+            session = await self._get_session()
+            if is_gemini:
+                payload = {
+                    "model": model,
+                    "messages": [{"role": "user", "content": f"Generate an image: {prompt}"}],
+                    "max_tokens": 4096,
+                    "stream": False,
+                }
+                async with session.post(
+                    f"{creds['api_base']}/chat/completions",
+                    headers=headers,
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=timeout),
+                ) as resp:
+                    if resp.status != 200:
+                        body = await resp.text()
+                        logger.warning(f"角色参考图生成失败 ({resp.status}): {body[:200]}")
+                        return False
+                    data = await resp.json()
+                    choices = data.get("choices", [])
+                    if not choices:
+                        return False
+                    content = choices[0].get("message", {}).get("content", "")
+                    if isinstance(content, str):
+                        m = re.search(r'data:image/[^;]+;base64,([A-Za-z0-9+/=\s]+)', content)
+                        if m:
+                            b64_str = m.group(1).replace('\n', '').replace(' ', '')
+                            output.write_bytes(base64.b64decode(b64_str))
+                            return True
+                    return False
+            else:
+                async with session.post(
+                    f"{creds['api_base']}/images/generations",
+                    headers=headers,
+                    json={"model": model, "prompt": prompt, "size": "1024x1024", "n": 1},
+                    timeout=aiohttp.ClientTimeout(total=timeout),
+                ) as resp:
+                    if resp.status != 200:
+                        return False
+                    data = await resp.json()
+                    url = data.get("data", [{}])[0].get("url")
+                    if url:
+                        async with session.get(url) as dl:
+                            if dl.status == 200:
+                                output.write_bytes(await dl.read())
                                 return True
-                        return False
-                else:
-                    async with session.post(
-                        f"{creds['api_base']}/images/generations",
-                        headers=headers,
-                        json={"model": model, "prompt": prompt, "size": "1024x1024", "n": 1},
-                    ) as resp:
-                        if resp.status != 200:
-                            return False
-                        data = await resp.json()
-                        url = data.get("data", [{}])[0].get("url")
-                        if url:
-                            async with session.get(url) as dl:
-                                if dl.status == 200:
-                                    output.write_bytes(await dl.read())
-                                    return True
-                        return False
-        except Exception as e:
+                    return False
+        except (aiohttp.ClientError, asyncio.TimeoutError, KeyError, ValueError, OSError) as e:
             logger.warning(f"角色参考图 API 异常: {e}")
             return False
 
@@ -4394,6 +4500,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--review_mode", choices=sorted(REVIEW_MODES), help="质量审查模式：metrics_only | hybrid_judge")
     parser.add_argument("--video_only", action="store_true", help="调试模式：跳过图片生成，只生成视频（图片必须已存在）")
     parser.add_argument("--no_api", action="store_true", help="禁用外部 API，生成占位素材")
+    parser.add_argument("--resume", action="store_true", help="从上次中断处继续，跳过已完成的 shot")
     parser.add_argument("--verbose", action="store_true", help="详细日志")
     return parser
 
@@ -4414,7 +4521,10 @@ async def _async_main(args: argparse.Namespace) -> None:
             output_dir=output_dir,
             use_api=not args.no_api,
         )
-        result = await gen.generate(character_id_filter=args.character_id)
+        try:
+            result = await gen.generate(character_id_filter=args.character_id)
+        finally:
+            await gen.close()
 
         result_path = output_dir / "character_refs.json"
         write_json(result_path, result)
@@ -4437,8 +4547,12 @@ async def _async_main(args: argparse.Namespace) -> None:
             use_api=not args.no_api,
             review_mode=args.review_mode,
             video_only=args.video_only,
+            resume=args.resume,
         )
-        assets = await generator.run()
+        try:
+            assets = await generator.run()
+        finally:
+            await generator.close()
 
         assets_path = output_dir / "assets.json"
         write_json(assets_path, assets)

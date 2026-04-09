@@ -236,6 +236,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--video_only", action="store_true", help="Debug mode: skip image generation, only generate videos (images must exist)")
     parser.add_argument("--image_width", type=int, default=1024, help="Image width for generated assets")
     parser.add_argument("--image_height", type=int, default=1024, help="Image height for generated assets")
+    parser.add_argument("--resume", action="store_true", help="Resume asset generation from last checkpoint")
     parser.add_argument("--verbose", action="store_true", help="Verbose logging")
     return parser
 
@@ -549,6 +550,8 @@ def main() -> None:
             command.append("--video_only")
         if args.no_api:
             command.append("--no_api")
+        if getattr(args, "resume", False):
+            command.append("--resume")
         if args.verbose:
             command.append("--verbose")
         run_checked(command)
