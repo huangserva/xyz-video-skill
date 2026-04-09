@@ -17,6 +17,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from PIL import Image
 
 from utils import config_dir, read_yaml, setup_logging, write_json
@@ -245,18 +246,12 @@ def _extract_boundary_frames(
 
 def _frame_mse(frame_a: Path, frame_b: Path) -> float:
     with Image.open(frame_a) as img_a, Image.open(frame_b) as img_b:
-        a = list(img_a.convert("RGB").getdata())
-        b = list(img_b.convert("RGB").getdata())
-    if len(a) != len(b) or not a:
+        a = np.asarray(img_a.convert("RGB"), dtype=np.float32)
+        b = np.asarray(img_b.convert("RGB"), dtype=np.float32)
+    if a.shape != b.shape or a.size == 0:
         return 1e9
-    diff = 0.0
-    for px_a, px_b in zip(a, b):
-        diff += (
-            (px_a[0] - px_b[0]) ** 2 +
-            (px_a[1] - px_b[1]) ** 2 +
-            (px_a[2] - px_b[2]) ** 2
-        ) / 3.0
-    return diff / len(a)
+    diff = a - b
+    return float(np.mean(diff * diff))
 
 
 def _estimate_overlap_window(prev_video: Path, next_video: Path) -> tuple[float, float, float]:

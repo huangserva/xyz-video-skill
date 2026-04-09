@@ -1,4 +1,5 @@
 aiohttp
+numpy
 Pillow
 PyYAML
 edge-tts

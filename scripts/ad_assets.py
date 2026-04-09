@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 import aiohttp
+import numpy as np
 from PIL import Image, ImageDraw
 
 from utils import get_api_credentials, get_model_config, load_external_api_config, setup_logging, timestamp_id, write_json, write_text
@@ -944,26 +945,24 @@ class AssetGenerator:
             if len(frame_files) < 6:
                 return result
 
-            frames = []
+            frames: list[Image.Image] = []
+            frame_arrays: list[np.ndarray] = []
             for ff in frame_files:
                 try:
                     img = Image.open(ff).convert("RGB")
                     frames.append(img)
+                    frame_arrays.append(np.asarray(img, dtype=np.float32))
                 except Exception:
                     continue
 
             if len(frames) < 6:
                 return result
 
-            # 计算所有相邻帧 MSE
-            diffs = []
-            for j in range(1, len(frames)):
-                px_a = list(frames[j - 1].getdata())
-                px_b = list(frames[j].getdata())
-                mse = sum(
-                    (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2
-                    for a, b in zip(px_a, px_b)
-                ) / (len(px_a) * 3)
+            # 计算所有相邻帧 MSE（numpy 向量化）
+            diffs: list[float] = []
+            for j in range(1, len(frame_arrays)):
+                diff = frame_arrays[j] - frame_arrays[j - 1]
+                mse = float(np.mean(diff * diff))
                 diffs.append(mse)
 
             if not diffs:
@@ -987,11 +986,19 @@ class AssetGenerator:
             # ── 用滑动窗口平滑 MSE，消除闪烁的高低交替 ──
             # 窗口大小 5：每帧的"有效 MSE"= 周围 5 帧的最大值
             # 这能有效消除奇偶帧交替闪烁（高-1-高-1 模式）
-            smoothed = []
-            for j in range(len(diffs)):
-                start = max(0, j - 2)
-                end = min(len(diffs), j + 3)
-                smoothed.append(max(diffs[start:end]))
+            diffs_arr = np.array(diffs)
+            n = len(diffs)
+            smoothed_arr = diffs_arr.copy()
+            for offset in (-2, -1, 1, 2):
+                lo = max(0, offset)
+                hi = min(0, offset)
+                src_start = max(0, -offset)
+                src_end = n + min(0, -offset)
+                smoothed_arr[lo: n + hi if hi else n] = np.maximum(
+                    smoothed_arr[lo: n + hi if hi else n],
+                    diffs_arr[src_start:src_end],
+                )
+            smoothed: list[float] = smoothed_arr.tolist()
 
             # ── 从后往前找最后一个稳定点 ──
             # "稳定"定义：连续 6 帧平滑后的 MSE 都在阈值以下
@@ -1108,18 +1115,13 @@ class AssetGenerator:
                 and motion_ramp_start < len(smoothed) - 8
                 and profile_name in {"medium_motion", "heavy_motion"}
             ):
-                ramp_segment = smoothed[motion_ramp_start:]
-                up_steps = 0
-                large_drops = 0
-                for idx in range(1, len(ramp_segment)):
-                    delta = ramp_segment[idx] - ramp_segment[idx - 1]
-                    if delta >= 0:
-                        up_steps += 1
-                    elif abs(delta) > threshold * 0.2:
-                        large_drops += 1
+                ramp_segment = smoothed_arr[motion_ramp_start:]
+                ramp_deltas = np.diff(ramp_segment)
+                up_steps = int(np.sum(ramp_deltas >= 0))
+                large_drops = int(np.sum(ramp_deltas < -threshold * 0.2))
                 total_steps = max(1, len(ramp_segment) - 1)
                 ramp_up_ratio = up_steps / total_steps
-                ramp_peak = max(ramp_segment)
+                ramp_peak = float(np.max(ramp_segment))
                 motion_ramp_exempt = ramp_up_ratio >= 0.6 and large_drops <= 1 and ramp_peak >= threshold * 1.2
                 result["analysis"]["motion_ramp"] = {
                     "start_time": (motion_ramp_start + 1) / fps,
@@ -1136,18 +1138,27 @@ class AssetGenerator:
                 float(profile["min_amplitude_base"]),
                 median_diff * float(profile["min_amplitude_multiplier"]),
             )  # 反转幅度阈值
-            reversals = 0
 
-            for j in range(len(diffs) - 1, 1, -1):
-                going_up = diffs[j] > diffs[j - 1]
-                was_up = diffs[j - 1] > diffs[j - 2]
-                amplitude = abs(diffs[j] - diffs[j - 1])
-                if going_up != was_up and amplitude > min_amplitude:
+            # 向量化计算相邻差分方向和振幅
+            if n >= 3:
+                deltas = np.diff(diffs_arr)  # diffs_arr[j] - diffs_arr[j-1], 长度 n-1
+                directions = deltas > 0  # True = 上升
+                amplitudes = np.abs(deltas)
+                # 反转 = 相邻方向不同且振幅超阈值
+                is_reversal = (directions[1:] != directions[:-1]) & (amplitudes[1:] > min_amplitude)
+            else:
+                is_reversal = np.array([], dtype=bool)
+
+            # 从后往前找闪烁段（保持原逻辑：连续反转达到阈值时裁剪）
+            reversals = 0
+            reversal_count_threshold = int(profile["reversal_count"])
+            for j in range(len(is_reversal) - 1, -1, -1):
+                if is_reversal[j]:
                     reversals += 1
                 else:
-                    if reversals >= int(profile["reversal_count"]):
-                        # 发现闪烁段，更新 keep_time
-                        flicker_start_time = (j + 1) / fps
+                    if reversals >= reversal_count_threshold:
+                        # j+2 对应 diffs 中的索引（is_reversal[j] 对应 diffs[j+2] vs diffs[j+1]）
+                        flicker_start_time = (j + 2 + 1) / fps
                         if flicker_start_time < keep_time:
                             keep_time = flicker_start_time
                             result["trigger"] = "flicker"
@@ -1158,7 +1169,7 @@ class AssetGenerator:
                     reversals = 0
 
             # 检查开头处的闪烁
-            if reversals >= int(profile["reversal_count"]):
+            if reversals >= reversal_count_threshold:
                 flicker_start_time = 2 / fps
                 if flicker_start_time < keep_time:
                     keep_time = flicker_start_time
@@ -1173,24 +1184,26 @@ class AssetGenerator:
             spike_count = 0
             first_spike_time = None
 
-            for j in range(len(diffs)):
-                # 局部窗口（排除自身）
+            # 用 cumsum 做 O(n) 滑动窗口局部均值（排除自身）
+            cumsum = np.concatenate(([0.0], np.cumsum(diffs_arr)))
+            for j in range(n):
                 w_start = max(0, j - spike_window)
-                w_end = min(len(diffs), j + spike_window + 1)
-                neighbors = [diffs[k] for k in range(w_start, w_end) if k != j]
-                if not neighbors:
+                w_end = min(n, j + spike_window + 1)
+                window_sum = cumsum[w_end] - cumsum[w_start]
+                window_count = w_end - w_start - 1  # 排除自身
+                if window_count <= 0:
                     continue
-                local_mean = sum(neighbors) / len(neighbors)
+                local_mean = (window_sum - diffs_arr[j]) / window_count
 
-                if diffs[j] > max(spike_abs_min, local_mean * spike_factor):
+                if diffs_arr[j] > max(spike_abs_min, local_mean * spike_factor):
                     spike_count += 1
                     t = (j + 1) / fps
                     if first_spike_time is None:
                         first_spike_time = t
                     logger.debug(
                         f"质量检测: 局部突变 @{t:.2f}s "
-                        f"(MSE={diffs[j]:.0f}, 局部均值={local_mean:.0f}, "
-                        f"倍率={diffs[j]/local_mean:.1f}x)"
+                        f"(MSE={diffs_arr[j]:.0f}, 局部均值={local_mean:.0f}, "
+                        f"倍率={diffs_arr[j]/local_mean:.1f}x)"
                     )
 
             if spike_count >= 2:
