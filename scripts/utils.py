@@ -14,6 +14,21 @@ from typing import Any, Dict
 import yaml
 
 
+VIDEO_REFERENCE_USAGE_ALIASES: dict[str, str] = {
+    "first_frame": "first_frame",
+    "last_frame": "reference_target_state",
+    "keyframe": "reference_stage",
+    "reference_character": "reference_character",
+    "reference_prop": "reference_prop",
+    "reference_composition": "reference_composition",
+    "reference_style": "reference_style",
+    "reference_color": "reference_color",
+    "reference_target_state": "reference_target_state",
+    "reference_stage": "reference_stage",
+    "reference_motion": "reference_motion",
+}
+
+
 def _json_default(value: Any) -> Any:
     """为 JSON 序列化补充常见本地类型支持。"""
     if isinstance(value, Path):

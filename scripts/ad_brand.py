@@ -34,6 +34,11 @@ class BrandAdapter:
         self.output_dir = output_dir
         self.storyboard = storyboard or {}
         self.logo_path = logo_path
+        try:
+            ImageColor.getrgb(brand_color)
+        except ValueError:
+            LOGGER.warning(f"无效的 brand_color '{brand_color}'，回退到 #FF6A00")
+            brand_color = "#FF6A00"
         self.brand_color = brand_color
         self.product_image = product_image
         self.product_shots = product_shots or set()
@@ -46,12 +51,26 @@ class BrandAdapter:
         self.logo_img = self._load_rgba(self.logo_path)
         self.product_img = self._load_rgba(self.product_image)
 
-        shots = self.storyboard.get("shots", []) if isinstance(self.storyboard, dict) else []
-        self.subtitle_map = {
-            int(s.get("id", 0)): str(s.get("subtitle", ""))
-            for s in shots
-            if isinstance(s, dict)
-        }
+        self.subtitle_map = self._build_subtitle_map()
+
+    def _build_subtitle_map(self) -> dict[int, str]:
+        """从 storyboard 提取字幕映射，支持 scenes > shots 和 flat shots 两种格式。"""
+        if not isinstance(self.storyboard, dict):
+            return {}
+        result: dict[int, str] = {}
+        # 优先从 scenes > shots 读取（当前标准格式）
+        for scene in self.storyboard.get("scenes", []):
+            if not isinstance(scene, dict):
+                continue
+            for s in scene.get("shots", []):
+                if isinstance(s, dict):
+                    result[int(s.get("id", 0))] = str(s.get("subtitle", ""))
+        # 向下兼容 flat shots
+        if not result:
+            for s in self.storyboard.get("shots", []):
+                if isinstance(s, dict):
+                    result[int(s.get("id", 0))] = str(s.get("subtitle", ""))
+        return result
 
     def apply(self) -> dict[str, Any]:
         """执行全量品牌化。"""
@@ -76,8 +95,18 @@ class BrandAdapter:
             new_item["branded"] = True
             branded_images.append(new_item)
 
-        intro = self._make_title_frame("品牌开场", filename="intro.png")
-        outro = self._make_title_frame("立即行动", filename="outro.png")
+        # 从已品牌化的图片推断标题帧尺寸，回退到 1080x1920
+        title_w, title_h = 1080, 1920
+        if branded_images:
+            first_branded = Path(branded_images[0].get("path", ""))
+            if first_branded.exists():
+                try:
+                    with Image.open(first_branded) as probe:
+                        title_w, title_h = probe.size
+                except Exception:
+                    pass
+        intro = self._make_title_frame("品牌开场", filename="intro.png", width=title_w, height=title_h)
+        outro = self._make_title_frame("立即行动", filename="outro.png", width=title_w, height=title_h)
 
         new_manifest = dict(self.manifest)
         new_manifest["images"] = branded_images
@@ -92,13 +121,14 @@ class BrandAdapter:
         return new_manifest
 
     def _load_rgba(self, path: Path | None) -> Image.Image | None:
-        """读取并转换为 RGBA。"""
+        """读取并转换为 RGBA（copy 后关闭文件句柄）。"""
         if not path:
             return None
         if not path.exists():
             LOGGER.warning("图片资源不存在: %s", path)
             return None
-        return Image.open(path).convert("RGBA")
+        with Image.open(path) as img:
+            return img.convert("RGBA").copy()
 
     def _brand_single_image(self, src: Path, dst: Path, subtitle: str, shot_id: int) -> None:
         """品牌化单张图片。"""
@@ -158,9 +188,9 @@ class BrandAdapter:
         base_rgba.paste(resized, pos, resized)
         return base_rgba
 
-    def _make_title_frame(self, text: str, filename: str) -> Path:
-        """生成片头/片尾品牌画面。"""
-        size = (1080, 1920)
+    def _make_title_frame(self, text: str, filename: str, width: int = 1080, height: int = 1920) -> Path:
+        """生成片头/片尾品牌画面，尺寸适配目标平台。"""
+        size = (width, height)
         img = Image.new("RGBA", size, color=ImageColor.getrgb(self.brand_color) + (255,))
         draw = ImageDraw.Draw(img)
         draw.text((80, 180), self.title_text, fill=(255, 255, 255, 235))

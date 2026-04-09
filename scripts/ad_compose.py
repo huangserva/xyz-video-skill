@@ -424,7 +424,8 @@ async def _compose_video(
         return None
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    segments = []
+    segments: list[Path] = []
+    segment_shot_ids: list[int] = []  # 与 segments 一一对应的 shot_id
 
     images = {img["shot_id"]: img for img in assets.get("images", [])}
     videos = {vid["shot_id"]: vid for vid in assets.get("videos", [])}
@@ -458,6 +459,7 @@ async def _compose_video(
                 try:
                     subprocess.run(cmd, check=True, capture_output=True)
                     segments.append(seg_path)
+                    segment_shot_ids.append(int(shot_id))
                     logger.info(f"片段 {shot_id}: 使用 Seedance 视频")
                     continue
                 except subprocess.CalledProcessError as e:
@@ -483,6 +485,7 @@ async def _compose_video(
         try:
             subprocess.run(cmd, check=True, capture_output=True)
             segments.append(seg_path)
+            segment_shot_ids.append(int(shot_id))
             logger.info(f"片段 {shot_id}: fallback 图片模式")
         except subprocess.CalledProcessError as e:
             logger.warning(f"片段 {shot_id} 合成失败: {e}")
@@ -490,11 +493,11 @@ async def _compose_video(
     if not segments:
         return None
 
-    # 拼接片段（支持转场效果）
+    # 拼接片段（支持转场效果）——按实际生成的 segment 顺序匹配转场
     merged = output_dir / f"{platform}_merged.mp4"
-    transitions: list[dict[str, Any] | None] = [None]
-    for shot in shots[1:]:
-        decision = decisions_by_to.get(int(shot["id"]), {})
+    transitions: list[dict[str, Any] | None] = [None]  # 第一个 segment 无转场
+    for sid in segment_shot_ids[1:]:
+        decision = decisions_by_to.get(sid, {})
         transitions.append(
             {
                 "type": decision.get("transition_type", "straight-cut"),

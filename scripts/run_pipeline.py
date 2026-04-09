@@ -16,13 +16,21 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import os
 import subprocess
 import sys
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from utils import (
+    VIDEO_REFERENCE_USAGE_ALIASES,
+    create_output_dir,
+    default_output_root,
+    ensure_dir,
+    read_json,
+    setup_logging,
+    timestamp_id,
+    write_json,
+)
 from validate_json import validate_file
 
 
@@ -31,63 +39,6 @@ AD_ASSETS = SCRIPT_DIR / "ad_assets.py"
 AD_BRAND = SCRIPT_DIR / "ad_brand.py"
 AD_COMPOSE = SCRIPT_DIR / "ad_compose.py"
 STAGE_ORDER = ["validate", "refs", "assets", "brand", "compose"]
-VIDEO_REFERENCE_USAGE_ALIASES = {
-    "first_frame": "first_frame",
-    "last_frame": "reference_target_state",
-    "keyframe": "reference_stage",
-    "reference_character": "reference_character",
-    "reference_prop": "reference_prop",
-    "reference_composition": "reference_composition",
-    "reference_style": "reference_style",
-    "reference_color": "reference_color",
-    "reference_target_state": "reference_target_state",
-    "reference_stage": "reference_stage",
-    "reference_motion": "reference_motion",
-}
-
-
-def setup_logging(verbose: bool = False) -> None:
-    level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(level=level, format="[%(asctime)s] %(levelname)s %(name)s: %(message)s")
-
-
-def timestamp_id() -> str:
-    return datetime.now().strftime("%Y%m%d_%H%M%S")
-
-
-def ensure_dir(path: Path) -> Path:
-    path.mkdir(parents=True, exist_ok=True)
-    return path
-
-
-def default_output_root() -> Path:
-    env_root = os.getenv("VIDEO_OUTPUT_ROOT") or os.getenv("AD_OUTPUT_ROOT")
-    if env_root:
-        return Path(env_root).expanduser().resolve()
-
-    home_root = Path.home() / "video-output"
-    try:
-        home_root.mkdir(parents=True, exist_ok=True)
-        test_file = home_root / ".write_test"
-        test_file.write_text("ok", encoding="utf-8")
-        test_file.unlink(missing_ok=True)
-        return home_root
-    except Exception:
-        return Path("/tmp/video-output")
-
-
-def create_output_dir(run_id: str | None = None) -> Path:
-    return ensure_dir(default_output_root() / (run_id or timestamp_id()))
-
-
-def read_json(path: Path) -> Any:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def write_json(path: Path, data: Any) -> Path:
-    ensure_dir(path.parent)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    return path
 
 
 def run_checked(command: list[str]) -> None:

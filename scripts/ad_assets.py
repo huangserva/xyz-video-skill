@@ -27,7 +27,7 @@ import aiohttp
 import numpy as np
 from PIL import Image, ImageDraw
 
-from utils import get_api_credentials, get_model_config, load_external_api_config, setup_logging, timestamp_id, write_json, write_text
+from utils import VIDEO_REFERENCE_USAGE_ALIASES, get_api_credentials, get_model_config, load_external_api_config, setup_logging, timestamp_id, write_json, write_text
 from content_filter import ContentFilter, VideoPromptBuilder
 
 logger = logging.getLogger(__name__)
@@ -47,20 +47,6 @@ VIDEO_REFERENCE_USAGE_PRIORITY = {
     "reference_motion": 8,
     "reference": 99,
 }
-VIDEO_REFERENCE_USAGE_ALIASES = {
-    "first_frame": "first_frame",
-    "last_frame": "reference_target_state",
-    "keyframe": "reference_stage",
-    "reference_character": "reference_character",
-    "reference_prop": "reference_prop",
-    "reference_composition": "reference_composition",
-    "reference_style": "reference_style",
-    "reference_color": "reference_color",
-    "reference_target_state": "reference_target_state",
-    "reference_stage": "reference_stage",
-    "reference_motion": "reference_motion",
-}
-
 QUALITY_PROFILES: dict[str, dict[str, float | int]] = {
     "static": {
         "threshold_base": 250,
