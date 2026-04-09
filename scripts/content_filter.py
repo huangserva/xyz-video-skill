@@ -157,50 +157,120 @@ class VideoPromptBuilder:
             return {
                 "medium": "illustrated",
                 "lock_line": (
-                    "STYLE MEDIUM LOCK: illustrated / painterly cinematic frame. "
-                    "All shots must remain in the same illustrated medium. "
-                    "Do NOT drift into photorealistic live-action imagery."
+                    "风格媒介锁定：插画 / 绘画感电影画面。"
+                    "所有镜头都必须保持同一种插画媒介。"
+                    "不要漂移成写实真人影像。"
                 ),
             }
         if any(token in lower for token in three_d_tokens):
             return {
                 "medium": "three_dimensional",
                 "lock_line": (
-                    "STYLE MEDIUM LOCK: stylized 3D / CG cinematic frame. "
-                    "All shots must remain in the same 3D-rendered medium. "
-                    "Do NOT drift into hand-drawn illustration or live-action photorealism."
+                    "风格媒介锁定：风格化 3D / CG 电影画面。"
+                    "所有镜头都必须保持同一种 3D 渲染媒介。"
+                    "不要漂移成手绘插画或真人写实影像。"
                 ),
             }
         if any(token in lower for token in photoreal_tokens):
             return {
                 "medium": "photorealistic",
                 "lock_line": (
-                    "STYLE MEDIUM LOCK: photorealistic live-action cinematic frame. "
-                    "All shots must remain in the same photoreal medium. "
-                    "Do NOT drift into illustration, anime, comic, or painterly rendering."
+                    "风格媒介锁定：写实真人电影画面。"
+                    "所有镜头都必须保持同一种写实媒介。"
+                    "不要漂移成插画、动漫、漫画或绘画渲染。"
                 ),
             }
         return {
             "medium": "unspecified",
             "lock_line": (
-                "STYLE MEDIUM LOCK: choose ONE visual medium for the entire project and keep it identical "
-                "across all shots. Do NOT switch between photorealistic, illustrated, anime, comic, or 3D render styles."
+                "风格媒介锁定：整个项目只能选择一种视觉媒介，并在所有镜头中保持完全一致。"
+                "不要在写实、插画、动漫、漫画或 3D 渲染风格之间来回切换。"
             ),
         }
 
     @staticmethod
-    def _append_subject_constraints(parts: list[str], subject_constraints: dict[str, Any] | None) -> None:
+    def _reference_usage_line(ref: dict[str, Any], mention: str) -> str:
+        usage = str(ref.get("usage", "")).strip() or "reference"
+        subject = str(ref.get("subject", "")).strip()
+        stage = str(ref.get("stage", "")).strip()
+        description = str(ref.get("description", "")).strip()
+
+        suffix = f"（{subject}）" if subject else ""
+        mapping = {
+            "first_frame": f"{mention} 作为首帧。",
+            "reference_character": f"{mention} 参考角色{suffix}。",
+            "reference_prop": f"{mention} 参考道具{suffix}。",
+            "reference_composition": f"{mention} 参考构图。",
+            "reference_style": f"{mention} 参考风格。",
+            "reference_color": f"{mention} 参考色调。",
+            "reference_target_state": f"{mention} 参考目标状态。",
+            "reference_stage": (
+                f"{mention} 参考动作阶段：{stage}。"
+                if stage else
+                f"{mention} 参考中间阶段。"
+            ),
+            "reference_motion": f"{mention} 参考镜头语言。",
+        }
+        if usage in mapping:
+            return mapping[usage]
+        if description:
+            return f"{mention} 作为参考：{description}"
+        return f"{mention} 作为参考。"
+
+    @staticmethod
+    def build_reference_callouts(
+        references: list[dict[str, Any]] | None,
+        *,
+        mention_prefix: str = "@图片",
+    ) -> list[str]:
+        if not isinstance(references, list):
+            return []
+        lines: list[str] = []
+        for idx, ref in enumerate(references, start=1):
+            if not isinstance(ref, dict):
+                continue
+            mention = str(ref.get("mention", "")).strip() or f"{mention_prefix}{idx}"
+            lines.append(VideoPromptBuilder._reference_usage_line(ref, mention))
+        return lines
+
+    @staticmethod
+    def compose_video_generation_prompt(
+        base_prompt: str,
+        references: list[dict[str, Any]] | None,
+        *,
+        mention_prefix: str = "@图片",
+    ) -> str:
+        callouts = VideoPromptBuilder.build_reference_callouts(references, mention_prefix=mention_prefix)
+        if not callouts:
+            return base_prompt
+        parts = ["【参考素材调用】", *callouts, "", "【生成要求】", base_prompt]
+        return "\n".join(parts)
+
+    @staticmethod
+    def _append_subject_constraints(
+        parts: list[str],
+        subject_constraints: dict[str, Any] | None,
+        *,
+        for_model: bool = False,
+    ) -> None:
         """把 shot 级主体语义约束写入 prompt。"""
         if not isinstance(subject_constraints, dict) or not subject_constraints:
             return
 
-        mapping = [
-            ("required_visible_subjects", "Required visible subjects"),
-            ("optional_visible_subjects", "Optional visible subjects"),
-            ("offscreen_subjects", "Offscreen subjects"),
-            ("continuity_subjects", "Continuity-bound subjects"),
-            ("forbidden_visible_subjects", "Forbidden visible subjects"),
-        ]
+        if for_model:
+            mapping = [
+                ("required_visible_subjects", "必须出镜的主体"),
+                ("optional_visible_subjects", "可选出镜的主体"),
+                ("continuity_subjects", "需要保持连续性的主体"),
+            ]
+        else:
+            mapping = [
+                ("required_visible_subjects", "必须出镜的主体"),
+                ("optional_visible_subjects", "可选出镜的主体"),
+                ("offscreen_subjects", "必须保持画外的主体"),
+                ("continuity_subjects", "需要保持连续性的主体"),
+                ("forbidden_visible_subjects", "禁止出镜的主体"),
+            ]
         lines: list[str] = []
         for key, label in mapping:
             value = subject_constraints.get(key, [])
@@ -213,11 +283,42 @@ class VideoPromptBuilder:
         if isinstance(semantic_rules, list):
             cleaned_rules = [str(item).strip() for item in semantic_rules if str(item).strip()]
             for rule in cleaned_rules:
-                lines.append(f"  Rule: {rule}")
+                if for_model and re.search(r"(不要|禁止|不得|不可|不应)", rule):
+                    continue
+                lines.append(f"  规则: {rule}")
+
+        pose_contract = subject_constraints.get("pose_contract", [])
+        if isinstance(pose_contract, str):
+            pose_contract = [pose_contract]
+        if isinstance(pose_contract, list):
+            cleaned_pose_rules = [str(item).strip() for item in pose_contract if str(item).strip()]
+            for rule in cleaned_pose_rules:
+                if for_model and re.search(r"(不要|禁止|不得|不可|不应)", rule):
+                    continue
+                lines.append(f"  姿态合同: {rule}")
+
+        gaze_contract = subject_constraints.get("gaze_contract", {})
+        if isinstance(gaze_contract, dict):
+            for subject_id, config in gaze_contract.items():
+                if not isinstance(config, dict):
+                    continue
+                primary_target = str(config.get("primary_target", "")).strip()
+                target_zone = str(config.get("target_zone", "")).strip()
+                gaze_parts = []
+                if primary_target:
+                    gaze_parts.append(f"主要视线目标={primary_target}")
+                if target_zone:
+                    gaze_parts.append(f"目标区域={target_zone}")
+                if gaze_parts:
+                    label = str(subject_id).strip() or "主体"
+                    lines.append(f"  视线合同[{label}]: {'；'.join(gaze_parts)}")
 
         if lines:
             parts.append("")
-            parts.append("⚠️ SUBJECT CONTRACT — this shot must obey these subject-level constraints:")
+            if for_model:
+                parts.append("【镜头主体】")
+            else:
+                parts.append("⚠️ 主体约束合同——本镜头必须遵守以下主体级限制：")
             parts.extend(lines)
 
     @staticmethod
@@ -225,20 +326,20 @@ class VideoPromptBuilder:
         """把 shot 类型对应的通用生成策略写入 prompt。"""
         rules = {
             "visible_subject": [
-                "Keep all required visible subjects clearly and continuously in frame.",
-                "Do not swap subject identity, species, or count mid-shot.",
+                "所有必须出镜的主体都要清晰且持续地保留在画面内。",
+                "不要在镜头中途改变主体身份、物种或数量。",
             ],
             "offscreen_reaction": [
-                "This is a reaction shot. Keep the threat or target OFFSCREEN throughout the shot.",
-                "Do not reveal, hallucinate, or partially introduce unseen entities into frame.",
-                "Express danger only through gaze, pose, environment, sound implication, wind, dust, or lighting change.",
+                "这是一个反应镜头。威胁或目标在整个镜头内都必须保持画外。",
+                "不要把未出镜实体直接露出来，也不要幻觉出局部身体进入画面。",
+                "危险感只能通过视线、姿态、环境反应、声音暗示、风、尘土或光线变化来表达。",
             ],
             "transition_reveal": [
-                "This shot bridges from offscreen implication to onscreen reveal.",
-                "If a new entity appears, reveal it gradually and keep identity consistent with later shots.",
+                "这个镜头负责从画外暗示过渡到正式出镜。",
+                "如果有新主体出现，必须渐进式显露，并与后续镜头保持身份一致。",
             ],
             "free_atmosphere": [
-                "This is an atmosphere shot. Prioritize mood and environment continuity over character action.",
+                "这是一个氛围镜头。优先保证情绪与环境连续性，而不是人物动作。",
             ],
         }
         cleaned = str(shot_type or "").strip()
@@ -246,9 +347,170 @@ class VideoPromptBuilder:
             return
         selected = rules.get(cleaned, [])
         parts.append("")
-        parts.append(f"⚠️ SHOT TYPE — {cleaned}")
+        parts.append(f"⚠️ 镜头类型——{cleaned}")
         for rule in selected:
-            parts.append(f"  Rule: {rule}")
+            parts.append(f"  规则: {rule}")
+
+    @staticmethod
+    def _append_scene_continuity(
+        parts: list[str],
+        scene_continuity: dict[str, Any] | None,
+    ) -> None:
+        """把 scene 级连续性事实写入 prompt。"""
+        if not isinstance(scene_continuity, dict) or not scene_continuity:
+            return
+
+        stable_facts = scene_continuity.get("stable_facts", {})
+        carry_forward_subjects = scene_continuity.get("carry_forward_subjects", [])
+        entity_registry = scene_continuity.get("entity_registry", {})
+        lines: list[str] = []
+
+        if isinstance(stable_facts, dict):
+            label_map = {
+                "spatial_layout": "空间布局",
+                "prop_states": "道具状态",
+                "environment_states": "环境状态",
+                "character_states": "角色稳定状态",
+            }
+            for key, label in label_map.items():
+                value = stable_facts.get(key, [])
+                if isinstance(value, list):
+                    cleaned = [str(item).strip() for item in value if str(item).strip()]
+                    for item in cleaned:
+                        lines.append(f"  {label}: {item}")
+
+        if isinstance(carry_forward_subjects, list):
+            cleaned_subjects = [str(item).strip() for item in carry_forward_subjects if str(item).strip()]
+            if cleaned_subjects:
+                lines.append(f"  持续继承主体: {', '.join(cleaned_subjects)}")
+
+        if isinstance(entity_registry, dict):
+            for entity_id, config in entity_registry.items():
+                if not isinstance(config, dict):
+                    continue
+                count = config.get("count")
+                holder = str(config.get("holder", "")).strip()
+                persistent_state = str(config.get("persistent_state", "")).strip()
+                entity_parts = []
+                if count not in (None, ""):
+                    entity_parts.append(f"数量={count}")
+                if holder:
+                    entity_parts.append(f"持有者={holder}")
+                if persistent_state:
+                    entity_parts.append(f"持续状态={persistent_state}")
+                if entity_parts:
+                    lines.append(f"  实体注册[{entity_id}]: {'；'.join(entity_parts)}")
+
+        if lines:
+            parts.append("")
+            parts.append("⚠️ 场景连续性——以下稳定事实需跨镜头保持一致：")
+            parts.extend(lines)
+
+    @staticmethod
+    def _append_shot_delta(parts: list[str], shot_delta: list[str] | None) -> None:
+        """把 shot 级允许变化范围写入 prompt。"""
+        if not isinstance(shot_delta, list):
+            return
+        cleaned = [str(item).strip() for item in shot_delta if str(item).strip()]
+        if not cleaned:
+            return
+        parts.append("")
+        parts.append("⚠️ 本镜头变化边界——只允许发生以下变化：")
+        for item in cleaned:
+            parts.append(f"  {item}")
+
+    @staticmethod
+    def _append_director_plan(
+        parts: list[str],
+        director_plan: dict[str, Any] | None,
+        *,
+        node_context: dict[str, Any] | None = None,
+    ) -> None:
+        """把导演层信息写入 prompt。"""
+        if not isinstance(director_plan, dict) or not director_plan:
+            return
+
+        lines: list[str] = []
+        dramatic_core = str(director_plan.get("dramatic_core", "")).strip()
+        not_this_shot = str(director_plan.get("not_this_shot", "")).strip()
+        if dramatic_core:
+            lines.append(f"  戏核: {dramatic_core}")
+        if not_this_shot:
+            lines.append(f"  非本镜任务: {not_this_shot}")
+
+        viewer_flow = director_plan.get("viewer_information_flow", [])
+        if isinstance(viewer_flow, list):
+            cleaned_flow = [str(item).strip() for item in viewer_flow if str(item).strip()]
+            if cleaned_flow:
+                lines.append(f"  信息顺序: {' -> '.join(cleaned_flow)}")
+
+        if isinstance(node_context, dict) and node_context:
+            stage_lines: list[str] = []
+            story_function = str(node_context.get("story_function", "")).strip()
+            visual_focus = str(node_context.get("visual_focus", "")).strip()
+            must_show = node_context.get("must_show", [])
+            must_not_show = node_context.get("must_not_show", [])
+            delta_from_previous = str(node_context.get("delta_from_previous", "")).strip()
+            if story_function:
+                stage_lines.append(f"当前阶段任务: {story_function}")
+            if visual_focus:
+                stage_lines.append(f"当前视觉重心: {visual_focus}")
+            if isinstance(must_show, list):
+                cleaned_show = [str(item).strip() for item in must_show if str(item).strip()]
+                if cleaned_show:
+                    stage_lines.append(f"必须出现: {', '.join(cleaned_show)}")
+            if isinstance(must_not_show, list):
+                cleaned_not_show = [str(item).strip() for item in must_not_show if str(item).strip()]
+                if cleaned_not_show:
+                    stage_lines.append(f"不能提前出现: {', '.join(cleaned_not_show)}")
+            if delta_from_previous:
+                stage_lines.append(f"相对上一阶段主变化: {delta_from_previous}")
+            if stage_lines:
+                lines.extend(f"  {line}" for line in stage_lines)
+
+        if lines:
+            parts.append("")
+            parts.append("⚠️ 导演阶段合同——本镜头必须遵守以下阶段设计：")
+            parts.extend(lines)
+
+    @staticmethod
+    def _collect_scene_base_lines(
+        scene_environment: str,
+        scene_lighting: str,
+        scene_weather: str,
+        scene_props: list[str] | None,
+        *,
+        atmosphere: str = "",
+        physics: str = "",
+    ) -> list[str]:
+        lines: list[str] = []
+        lighting_text = scene_lighting or atmosphere
+        if lighting_text:
+            lines.append(f"光线：{lighting_text}")
+        weather_text = scene_weather or physics
+        if weather_text:
+            lines.append(f"天气/物理：{weather_text}")
+        if scene_props:
+            cleaned_props = [str(item).strip() for item in scene_props if str(item).strip()]
+            if cleaned_props:
+                lines.append(f"道具：{', '.join(cleaned_props)}")
+        return lines
+
+    @staticmethod
+    def _collect_image_constraint_lines(
+        subject_constraints: dict[str, Any] | None,
+        scene_continuity: dict[str, Any] | None,
+        shot_delta: list[str] | None,
+        shot_type: str,
+    ) -> list[str]:
+        lines: list[str] = []
+        cleaned_shot_type = str(shot_type or "").strip()
+        if cleaned_shot_type == "transition_reveal":
+            lines.append("画面重点是闯入感与未完成认出的阶段，新主体不能完整露出。")
+        elif cleaned_shot_type == "offscreen_reaction":
+            lines.append("画面重点是可见主体的反应，不表现画外主体本体。")
+
+        return lines
 
     @staticmethod
     def _is_high_interaction_video_shot(
@@ -298,12 +560,12 @@ class VideoPromptBuilder:
             return
 
         rules = [
-            "Keep the action as one continuous causal sequence within this shot.",
-            "Do NOT let any subject disengage from the interaction unless the storyboard explicitly requires it.",
-            "Do NOT turn one continuous clash into two separate encounters within the same shot.",
-            "Do NOT reset distance, battlefield position, or attack cycle mid-shot.",
-            "Do NOT send one subject running away in a different direction and then suddenly return to combat without a visible transition.",
-            "Preserve attacker-defender directional logic across the full shot.",
+            "整个镜头内的动作必须保持为一条连续的因果链。",
+            "除非 storyboard 明确要求，否则不要让任何主体中途脱离交互。",
+            "不要把同一次连续冲突拍成两个彼此断开的遭遇。",
+            "不要在镜头中途无原因重置距离、战场位置或攻击节奏。",
+            "不要让任何主体突然朝别的方向跑开，又在没有可见过渡的情况下重新回到交战。",
+            "全程保持攻击方与防守方的方向逻辑一致。",
         ]
 
         continuity_subjects = []
@@ -313,9 +575,9 @@ class VideoPromptBuilder:
                 continuity_subjects = [str(item).strip() for item in value if str(item).strip()]
         if continuity_subjects:
             rules.append(
-                "Keep these continuity-bound subjects semantically consistent throughout the shot: "
+                "以下连续性绑定主体在整个镜头内都必须保持语义一致："
                 + ", ".join(continuity_subjects)
-                + "."
+                + "。"
             )
 
         parts.append("")
@@ -328,6 +590,7 @@ class VideoPromptBuilder:
         style_anchor: str,
         character_appearances: list[tuple[str, str]],
         scene_description: str,
+        prop_appearances: list[tuple[str, str]] | None = None,
         motion_control: dict[str, Any] | None = None,
         camera_technical: str = "",
         atmosphere: str = "",
@@ -339,14 +602,19 @@ class VideoPromptBuilder:
         scene_lighting: str = "",
         scene_weather: str = "",
         scene_props: list[str] | None = None,
+        scene_continuity: dict[str, Any] | None = None,
         subject_constraints: dict[str, Any] | None = None,
+        shot_delta: list[str] | None = None,
         shot_type: str = "",
+        director_plan: dict[str, Any] | None = None,
+        node_context: dict[str, Any] | None = None,
     ) -> str:
         """构建图片生成 prompt（给 Gemini 用）。
 
         Args:
             style_anchor: 全局风格锚点
             character_appearances: [(char_id, appearance_text), ...]
+            prop_appearances: [(prop_id, prop_description), ...]
             scene_description: 本镜头特有的动作/构图描述（已过滤外貌）
             motion_control: 结构化运动控制字段
             camera_technical: 焦距+光圈
@@ -358,112 +626,144 @@ class VideoPromptBuilder:
             scene_lighting: 场景光线参数（来自 scene 层，同场景共享）
             scene_weather: 天气/粒子效果（来自 scene 层，同场景共享）
             scene_props: 场景道具列表（来自 scene 层，同场景共享）
+            scene_continuity: scene 级连续性稳定事实
             subject_constraints: shot 级主体语义约束
+            shot_delta: 当前镜头允许发生的变化边界
             shot_type: shot 级生成策略类型
         """
         clean_scene = ContentFilter.remove_clothing_descriptions(scene_description)
 
-        parts = []
+        constraint_lines = VideoPromptBuilder._collect_image_constraint_lines(
+            subject_constraints=subject_constraints,
+            scene_continuity=scene_continuity,
+            shot_delta=shot_delta,
+            shot_type=shot_type,
+        )
 
-        # 风格锚点
-        if style_anchor:
-            parts.append(style_anchor)
-        style_lock = VideoPromptBuilder.infer_style_medium_lock(style_anchor)
-        if style_lock.get("lock_line"):
-            parts.append(style_lock["lock_line"])
+        # ── 2. 出镜控制：谁出现 / 谁不能完整出现 ──
+        visibility_lines: list[str] = []
+        if isinstance(subject_constraints, dict):
+            for key, label in [
+                ("required_visible_subjects", "必须出镜"),
+                ("offscreen_subjects", "必须保持画外"),
+                ("forbidden_visible_subjects", "禁止完整出镜"),
+            ]:
+                value = subject_constraints.get(key, [])
+                if isinstance(value, list):
+                    cleaned = [str(item).strip() for item in value if str(item).strip()]
+                    if cleaned:
+                        visibility_lines.append(f"{label}：{', '.join(cleaned)}")
 
-        VideoPromptBuilder._append_shot_type_rules(parts, shot_type)
-        VideoPromptBuilder._append_subject_constraints(parts, subject_constraints)
+        if isinstance(node_context, dict):
+            must_show = node_context.get("must_show", [])
+            if isinstance(must_show, list):
+                cleaned_show = [str(item).strip() for item in must_show if str(item).strip()]
+                if cleaned_show:
+                    visibility_lines.append(f"必须看见：{', '.join(cleaned_show)}")
+            must_not_show = node_context.get("must_not_show", [])
+            if isinstance(must_not_show, list):
+                cleaned_not_show = [str(item).strip() for item in must_not_show if str(item).strip()]
+                if cleaned_not_show:
+                    visibility_lines.append(f"不能出现：{', '.join(cleaned_not_show)}")
 
-        # 角色外观设定（唯一真相来源）
-        if character_appearances:
-            parts.append("")
-            parts.append("⚠️ CHARACTER APPEARANCE — Single Source of Truth, MUST follow strictly:")
-            for char_id, appearance in character_appearances:
-                parts.append(f"  [{char_id}] {appearance}")
-
-        # 一致性锚点
-        if consistency_anchors:
-            chars_anchors = consistency_anchors.get("characters", [])
-            if chars_anchors:
-                anchor_parts = []
-                for ca in chars_anchors:
-                    cid = ca.get("id", "")
-                    must_show = ca.get("must_show", [])
-                    expr = ca.get("expression", "")
-                    if must_show:
-                        anchor_parts.append(f"  [{cid}] MUST SHOW: {', '.join(must_show)}. Expression: {expr}")
-                if anchor_parts:
-                    parts.append("")
-                    parts.append("⚠️ CONSISTENCY ANCHORS — these features MUST be visible:")
-                    parts.extend(anchor_parts)
-
-            # 环境锚点（shot 级，向下兼容）
-            env_anchors = consistency_anchors.get("environment", [])
-            if env_anchors:
-                parts.append("")
-                parts.append("⚠️ ENVIRONMENT ANCHORS — these elements MUST be present in the scene:")
-                parts.append(f"  {', '.join(env_anchors)}")
-
-        # ── 场景环境（scene 层级，同场景所有镜头共享，是视觉基底）──
-        env_parts = []
-        if scene_environment:
-            env_parts.append(f"  Environment: {scene_environment}")
-        # scene_lighting 优先，fallback 到旧的 atmosphere 参数
-        lighting_text = scene_lighting or atmosphere
-        if lighting_text:
-            env_parts.append(f"  Lighting: {lighting_text}")
-        # scene_weather 优先，fallback 到旧的 physics 参数
-        weather_text = scene_weather or physics
-        if weather_text:
-            env_parts.append(f"  Weather/Physics: {weather_text}")
-        if scene_props:
-            env_parts.append(f"  Props: {', '.join(scene_props)}")
-        if env_parts:
-            parts.append("")
-            parts.append("⚠️ SCENE ENVIRONMENT — shared by ALL shots in this scene, MUST be consistent:")
-            parts.extend(env_parts)
-
+        # ── 3. 姿态 / 视线 / 构图 / 景别 ──
+        frame_state_lines: list[str] = []
         if motion_control:
-            mc_lines = []
-            for label, key in [
-                ("Subject facing", "subject_facing"),
-                ("Camera relation", "camera_relation"),
-                ("Movement direction", "movement_direction"),
-                ("Screen trajectory", "screen_trajectory"),
-                ("Target", "target"),
-                ("Distance to target", "distance_to_target"),
+            for key, label in [
+                ("subject_facing", "主体朝向"),
+                ("camera_relation", "镜头关系"),
             ]:
                 value = str(motion_control.get(key, "")).strip()
                 if value:
-                    mc_lines.append(f"  {label}: {value}")
-            phase_beats = motion_control.get("phase_beats", [])
-            if isinstance(phase_beats, list) and phase_beats:
-                mc_lines.append(f"  Phase beats: {' -> '.join(str(item).strip() for item in phase_beats if str(item).strip())}")
-            if mc_lines:
-                parts.append("")
-                parts.append("⚠️ MOTION CONTROL — MUST preserve these spatial and temporal relations:")
-                parts.extend(mc_lines)
+                    frame_state_lines.append(f"{label}：{value}")
+        if isinstance(subject_constraints, dict):
+            pose_contract = subject_constraints.get("pose_contract", [])
+            if isinstance(pose_contract, str):
+                pose_contract = [pose_contract]
+            if isinstance(pose_contract, list):
+                for item in pose_contract[:2]:
+                    text = str(item).strip()
+                    if text:
+                        frame_state_lines.append(f"姿态合同：{text}")
 
-        # 本镜头描述（已清洗，不含外貌；只写动作/构图/姿态）
-        parts.append("")
-        parts.append(f"SHOT: {clean_scene}")
-
-        # 动作上下文（帮助首帧图摆出合适的姿态）
-        if action_hint:
-            clean_hint = ContentFilter.remove_clothing_descriptions(action_hint)
-            parts.append(f"ACTION CONTEXT (the motion that will follow this frame): {clean_hint}")
-            parts.append("Pose the characters to naturally lead into this action.")
-
-        # 镜头技术参数
+            gaze_contract = subject_constraints.get("gaze_contract", {})
+            if isinstance(gaze_contract, dict):
+                for subject_id, config in gaze_contract.items():
+                    if not isinstance(config, dict):
+                        continue
+                    primary_target = str(config.get("primary_target", "")).strip()
+                    target_zone = str(config.get("target_zone", "")).strip()
+                    gaze_parts = []
+                    if primary_target:
+                        gaze_parts.append(f"目标={primary_target}")
+                    if target_zone:
+                        gaze_parts.append(f"区域={target_zone}")
+                    if gaze_parts:
+                        frame_state_lines.append(f"视线合同[{subject_id}]：{'；'.join(gaze_parts)}")
         if camera_technical:
-            parts.append(f"TECHNICAL: {camera_technical}")
+            frame_state_lines.append(f"镜头参数：{camera_technical}")
 
-        # 规则
-        parts.append("")
-        parts.append("RULES: Character appearance MUST match the settings above exactly. "
-                      "Do NOT add or change any clothing, accessories, or body features. "
-                      "Do NOT include any text labels or annotations in the image.")
+        # ── 4. 环境 delta only ──
+        env_parts = VideoPromptBuilder._collect_scene_base_lines(
+            scene_environment=scene_environment,
+            scene_lighting=scene_lighting,
+            scene_weather=scene_weather,
+            scene_props=scene_props,
+            atmosphere=atmosphere,
+            physics=physics,
+        )
+
+        # ── 1. 这张图要表达什么 ──
+        intent_lines: list[str] = []
+        if isinstance(node_context, dict):
+            story_function = str(node_context.get("story_function", "")).strip()
+            visual_focus = str(node_context.get("visual_focus", "")).strip()
+            if story_function:
+                intent_lines.append(f"这张图要表达：{story_function}")
+            if visual_focus:
+                intent_lines.append(f"视觉重心：{visual_focus}")
+        if not intent_lines:
+            intent_lines.append(f"这张图要表达：{clean_scene}")
+
+        # ── 5. 兜底：其余见参考图 ──
+        fallback_lines: list[str] = []
+        if character_appearances:
+            fallback_lines.append("人物外观见角色参考图。")
+        if prop_appearances:
+            fallback_lines.append("关键道具外观见道具参考图。")
+        if env_parts:
+            fallback_lines.append("其余场景与视觉风格见场景参考图。")
+
+        parts: list[str] = []
+        parts.append("【1. 这张图要表达什么】")
+        parts.extend(intent_lines[:2])
+
+        if visibility_lines:
+            parts.append("")
+            parts.append("【2. 谁出现 / 谁不能完整出现】")
+            parts.extend(visibility_lines)
+
+        if frame_state_lines:
+            parts.append("")
+            parts.append("【3. 姿态 / 视线 / 构图 / 景别】")
+            parts.extend(frame_state_lines)
+            if clean_scene:
+                parts.append(f"当前画面描述：{clean_scene}")
+
+        if env_parts:
+            parts.append("")
+            parts.append("【4. 这帧特有的环境变化】")
+            parts.extend(env_parts)
+
+        if constraint_lines:
+            parts.append("")
+            parts.append("【附加硬约束】")
+            parts.extend(constraint_lines)
+
+        if fallback_lines:
+            parts.append("")
+            parts.append("【5. 其余见参考图】")
+            parts.extend(fallback_lines)
 
         return "\n".join(parts)
 
@@ -472,25 +772,39 @@ class VideoPromptBuilder:
         style_anchor: str,
         character_appearances: list[tuple[str, str]],
         action_description: str,
+        shot_intent: str = "",
+        opening_state: str = "",
+        target_outcome: str = "",
+        time_beats: list[str] | None = None,
         motion_control: dict[str, Any] | None = None,
         camera_movement: str = "",
         consistency_anchors: dict[str, Any] | None = None,
         narration: str = "",
         scene_environment: str = "",
+        scene_continuity: dict[str, Any] | None = None,
         subject_constraints: dict[str, Any] | None = None,
+        shot_delta: list[str] | None = None,
         shot_type: str = "",
+        director_plan: dict[str, Any] | None = None,
+        video_references: list[dict[str, Any]] | None = None,
     ) -> str:
         """构建视频生成 prompt（给 Seedance 用）。
 
         Args:
             character_appearances: [(char_id, appearance_text), ...]
             action_description: 动作描述（已过滤外貌）
+            shot_intent: 这个分镜到底要表达什么 / 完成什么叙事任务
+            opening_state: 镜头起始状态（通常来自 scene_prompt）
+            target_outcome: 镜头结果状态（通常来自 end_frame_description）
+            time_beats: 镜头内部时间节拍（仅保留可执行视觉描述）
             motion_control: 结构化运动控制字段
             camera_movement: 运镜方式
             consistency_anchors: 一致性锚点
             narration: 旁白文本（Seedance 音画同轨）
             scene_environment: 场景环境简述（来自 scene 层）
+            scene_continuity: scene 级连续性稳定事实
             subject_constraints: shot 级主体语义约束
+            shot_delta: 当前镜头允许发生的变化边界
             shot_type: shot 级生成策略类型
         """
         clean_action = ContentFilter.remove_clothing_descriptions(action_description)
@@ -504,40 +818,14 @@ class VideoPromptBuilder:
             parts.append(f"【媒介锁定】{style_lock['lock_line']}")
             parts.append("")
 
-        if shot_type:
-            VideoPromptBuilder._append_shot_type_rules(parts, shot_type)
+        state_lines: list[str] = []
+        if opening_state.strip():
+            state_lines.append(f"【起始画面】{opening_state.strip()}")
+        if target_outcome.strip():
+            state_lines.append(f"【目标结果】{target_outcome.strip()}")
+        if state_lines:
+            parts.extend(state_lines)
             parts.append("")
-        if subject_constraints:
-            VideoPromptBuilder._append_subject_constraints(parts, subject_constraints)
-            parts.append("")
-
-        # 角色外观设定
-        if character_appearances:
-            parts.append("【角色外观设定 - 唯一真相来源】")
-            for char_id, appearance in character_appearances:
-                # 截断过长描述
-                desc = appearance[:300] + "..." if len(appearance) > 300 else appearance
-                parts.append(f"【{char_id}】{desc}")
-            parts.append("")
-
-        # 一致性锚点
-        if consistency_anchors:
-            chars_anchors = consistency_anchors.get("characters", [])
-            anchor_lines = []
-            for ca in chars_anchors:
-                cid = ca.get("id", "")
-                must_show = ca.get("must_show", [])
-                expr = ca.get("expression", "")
-                if must_show:
-                    anchor_lines.append(f"[{cid}] 必须展示: {', '.join(must_show)}；表情: {expr}")
-            # 环境锚点
-            env_anchors = consistency_anchors.get("environment", [])
-            if env_anchors:
-                anchor_lines.append(f"环境要素: {', '.join(env_anchors)}")
-            if anchor_lines:
-                parts.append("【一致性要素】")
-                parts.extend(anchor_lines)
-                parts.append("")
 
         if motion_control:
             mc_lines = []
@@ -552,30 +840,30 @@ class VideoPromptBuilder:
                 value = str(motion_control.get(key, "")).strip()
                 if value:
                     mc_lines.append(f"{label}: {value}")
-            phase_beats = motion_control.get("phase_beats", [])
-            if isinstance(phase_beats, list):
-                cleaned_beats = [str(item).strip() for item in phase_beats if str(item).strip()]
-                if cleaned_beats:
-                    mc_lines.append(f"阶段节点: {' -> '.join(cleaned_beats)}")
             if mc_lines:
                 parts.append("【运动结构控制】")
                 parts.extend(mc_lines)
                 parts.append("")
 
+        if isinstance(time_beats, list):
+            cleaned_time_beats = [str(item).strip() for item in time_beats if str(item).strip()]
+            if cleaned_time_beats:
+                parts.append("【时间节拍】")
+                parts.extend(cleaned_time_beats)
+                parts.append("")
+
         # 动作（核心内容）
         prompt_body = f"{camera_movement}, {clean_action}" if camera_movement and clean_action else (clean_action or camera_movement)
-        if scene_environment:
-            parts.append(f"【场景环境】{scene_environment}")
-        parts.append(f"【场景动作】{prompt_body}")
-
-        VideoPromptBuilder._append_interaction_negative_rules(
-            parts,
-            character_appearances=character_appearances,
-            action_description=clean_action,
-            motion_control=motion_control,
-            camera_movement=camera_movement,
-            subject_constraints=subject_constraints,
+        scene_base_lines = VideoPromptBuilder._collect_scene_base_lines(
+            scene_environment=scene_environment,
+            scene_lighting="",
+            scene_weather="",
+            scene_props=None,
         )
+        if scene_base_lines:
+            parts.append("【场景基底】")
+            parts.extend(scene_base_lines)
+        parts.append(f"【场景动作】{prompt_body}")
 
         # 规则
         parts.append("")
@@ -589,4 +877,4 @@ class VideoPromptBuilder:
         if narration.strip():
             result = f"{result}\n\n旁白：{narration}"
 
-        return result
+        return VideoPromptBuilder.compose_video_generation_prompt(result, video_references)

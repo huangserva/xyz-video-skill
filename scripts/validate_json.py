@@ -17,6 +17,17 @@ VALID_ENVIRONMENT_TYPES = {"indoor", "outdoor", "natural", "urban", "fantasy"}
 VALID_CONTINUITY_MODES = {"strict", "scene_end", "free"}
 VALID_DISTANCE_TO_TARGET = {"getting_closer", "getting_farther", "holding_position"}
 VALID_SHOT_TYPES = {"visible_subject", "offscreen_reaction", "transition_reveal", "free_atmosphere"}
+VALID_VIDEO_REFERENCE_USAGES = {
+    "first_frame",
+    "reference_character",
+    "reference_prop",
+    "reference_composition",
+    "reference_style",
+    "reference_color",
+    "reference_target_state",
+    "reference_stage",
+    "reference_motion",
+}
 SUBJECT_CONSTRAINT_LIST_KEYS = {
     "required_visible_subjects",
     "optional_visible_subjects",
@@ -24,6 +35,12 @@ SUBJECT_CONSTRAINT_LIST_KEYS = {
     "continuity_subjects",
     "forbidden_visible_subjects",
     "semantic_rules",
+}
+SUBJECT_CONSTRAINT_STRING_OR_LIST_KEYS = {
+    "pose_contract",
+}
+SUBJECT_CONSTRAINT_DICT_KEYS = {
+    "gaze_contract",
 }
 
 
@@ -201,9 +218,11 @@ def validate_storyboard_current(data: dict[str, Any], report: ValidationReport) 
     require_positive_number(report, data, "total_duration", root)
 
     characters = require_dict(report, data, "characters", root)
+    prop_refs = data.get("prop_refs", {})
     scenes = require_list(report, data, "scenes", root)
 
     character_ids = set(characters.keys())
+    prop_ids = set(prop_refs.keys()) if isinstance(prop_refs, dict) else set()
     for char_id, character in characters.items():
         path = f"{root}.characters.{char_id}"
         if not isinstance(character, dict):
@@ -211,6 +230,19 @@ def validate_storyboard_current(data: dict[str, Any], report: ValidationReport) 
             continue
         for key in ["ref_image", "ref_description", "appearance"]:
             require_non_empty_string(report, character, key, path)
+
+    if prop_refs is not None:
+        if not isinstance(prop_refs, dict):
+            report.error(root, '"prop_refs" must be an object when provided')
+            prop_refs = {}
+            prop_ids = set()
+        for prop_id, prop_info in prop_refs.items():
+            path = f"{root}.prop_refs.{prop_id}"
+            if not isinstance(prop_info, dict):
+                report.error(path, "must be an object")
+                continue
+            for key in ["ref_description", "appearance"]:
+                require_non_empty_string(report, prop_info, key, path)
 
     seen_shot_ids: set[int] = set()
     for idx, scene in enumerate(scenes):
@@ -263,6 +295,16 @@ def validate_storyboard_current(data: dict[str, Any], report: ValidationReport) 
                     report.error(shot_path, '"characters_in_shot" must contain only non-empty strings')
                 elif character_ids and item not in character_ids:
                     report.error(shot_path, f'references unknown character id "{item}"')
+            shot_props = shot.get("props_in_shot", [])
+            if shot_props is not None:
+                if not isinstance(shot_props, list):
+                    report.error(shot_path, '"props_in_shot" must be a list')
+                else:
+                    for item in shot_props:
+                        if not is_non_empty_string(item):
+                            report.error(shot_path, '"props_in_shot" must contain only non-empty strings')
+                        elif prop_ids and item not in prop_ids:
+                            report.error(shot_path, f'references unknown prop id "{item}"')
             subject_constraints = shot.get("subject_constraints")
             if subject_constraints is not None:
                 if not isinstance(subject_constraints, dict):
@@ -270,14 +312,28 @@ def validate_storyboard_current(data: dict[str, Any], report: ValidationReport) 
                 else:
                     sc_path = f"{shot_path}.subject_constraints"
                     for key, value in subject_constraints.items():
-                        if key not in SUBJECT_CONSTRAINT_LIST_KEYS:
-                            report.warn(sc_path, f'unknown subject_constraints key "{key}"')
+                        if key in SUBJECT_CONSTRAINT_LIST_KEYS:
+                            if not isinstance(value, list):
+                                report.error(sc_path, f'"{key}" must be a list')
+                                continue
+                            if not all(is_non_empty_string(item) for item in value):
+                                report.error(sc_path, f'"{key}" must contain only non-empty strings')
                             continue
-                        if not isinstance(value, list):
-                            report.error(sc_path, f'"{key}" must be a list')
+                        if key in SUBJECT_CONSTRAINT_STRING_OR_LIST_KEYS:
+                            if isinstance(value, str):
+                                if not is_non_empty_string(value):
+                                    report.error(sc_path, f'"{key}" must be a non-empty string when provided as string')
+                            elif isinstance(value, list):
+                                if not all(is_non_empty_string(item) for item in value):
+                                    report.error(sc_path, f'"{key}" must contain only non-empty strings')
+                            else:
+                                report.error(sc_path, f'"{key}" must be a string or a list')
                             continue
-                        if not all(is_non_empty_string(item) for item in value):
-                            report.error(sc_path, f'"{key}" must contain only non-empty strings')
+                        if key in SUBJECT_CONSTRAINT_DICT_KEYS:
+                            if not isinstance(value, dict):
+                                report.error(sc_path, f'"{key}" must be an object')
+                            continue
+                        report.warn(sc_path, f'unknown subject_constraints key "{key}"')
             shot_type = shot.get("shot_type")
             if not is_non_empty_string(shot_type):
                 report.error(shot_path, '"shot_type" is required and must be a non-empty string')
@@ -379,6 +435,42 @@ def validate_storyboard_current(data: dict[str, Any], report: ValidationReport) 
                             report.error(kf_path, '"description" must be a non-empty string')
                     if cont_mode == "free" and keyframes:
                         report.warn(shot_path, '"keyframes" are ignored when continuity_mode is "free"')
+            video_references = shot.get("video_references")
+            if video_references is not None:
+                if not isinstance(video_references, list):
+                    report.error(shot_path, '"video_references" must be a list')
+                else:
+                    for ref_idx, ref in enumerate(video_references):
+                        ref_path = f"{shot_path}.video_references[{ref_idx}]"
+                        if not isinstance(ref, dict):
+                            report.error(ref_path, "must be an object")
+                            continue
+                        usage = ref.get("usage")
+                        if not is_non_empty_string(usage):
+                            report.error(ref_path, '"usage" must be a non-empty string')
+                        elif str(usage).strip() not in VALID_VIDEO_REFERENCE_USAGES:
+                            report.error(
+                                ref_path,
+                                f'"usage" must be one of {sorted(VALID_VIDEO_REFERENCE_USAGES)}',
+                            )
+                        for key in ("path", "source", "source_type", "source_id", "subject", "stage", "description"):
+                            value = ref.get(key)
+                            if value is not None and not isinstance(value, str):
+                                report.error(ref_path, f'"{key}" must be a string when provided')
+                        source_type = str(ref.get("source_type", "")).strip()
+                        source_id = str(ref.get("source_id", "")).strip()
+                        if source_type == "character" and source_id and character_ids and source_id not in character_ids:
+                            report.error(ref_path, f'references unknown character id "{source_id}"')
+                        if source_type == "prop" and source_id and prop_ids and source_id not in prop_ids:
+                            report.error(ref_path, f'references unknown prop id "{source_id}"')
+                        enabled = ref.get("enabled")
+                        if enabled is not None and not isinstance(enabled, bool):
+                            report.error(ref_path, '"enabled" must be a boolean when provided')
+                        timestamp = ref.get("timestamp")
+                        if timestamp is not None and not isinstance(timestamp, (int, float)):
+                            report.error(ref_path, '"timestamp" must be a number when provided')
+                        if not any(is_non_empty_string(ref.get(key)) for key in ("path", "source", "source_type")):
+                            report.warn(ref_path, 'should declare at least one of "path", "source", or "source_type"')
 
 
 def validate_storyboard_legacy(data: dict[str, Any], report: ValidationReport) -> None:

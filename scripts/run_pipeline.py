@@ -31,6 +31,19 @@ AD_ASSETS = SCRIPT_DIR / "ad_assets.py"
 AD_BRAND = SCRIPT_DIR / "ad_brand.py"
 AD_COMPOSE = SCRIPT_DIR / "ad_compose.py"
 STAGE_ORDER = ["validate", "refs", "assets", "brand", "compose"]
+VIDEO_REFERENCE_USAGE_ALIASES = {
+    "first_frame": "first_frame",
+    "last_frame": "reference_target_state",
+    "keyframe": "reference_stage",
+    "reference_character": "reference_character",
+    "reference_prop": "reference_prop",
+    "reference_composition": "reference_composition",
+    "reference_style": "reference_style",
+    "reference_color": "reference_color",
+    "reference_target_state": "reference_target_state",
+    "reference_stage": "reference_stage",
+    "reference_motion": "reference_motion",
+}
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -104,6 +117,97 @@ def infer_legacy_shot_type(shot: dict[str, Any]) -> tuple[str, str]:
     return "visible_subject", "fallback default for legacy storyboard"
 
 
+def normalize_video_reference_usage(value: Any) -> str:
+    cleaned = str(value or "").strip()
+    return VIDEO_REFERENCE_USAGE_ALIASES.get(cleaned, cleaned or "reference")
+
+
+def should_generate_target_state_reference(shot: dict[str, Any], *, is_last_in_scene: bool) -> bool:
+    continuity_mode = str(shot.get("continuity_mode", "scene_end")).strip() or "scene_end"
+    return continuity_mode == "strict" or (continuity_mode == "scene_end" and is_last_in_scene)
+
+
+def normalize_explicit_video_references(video_references: Any) -> tuple[list[dict[str, Any]], list[str]]:
+    normalized: list[dict[str, Any]] = []
+    notes: list[str] = []
+    if not isinstance(video_references, list):
+        return normalized, notes
+    for idx, item in enumerate(video_references):
+        if not isinstance(item, dict):
+            notes.append(f"ignored non-object video_references[{idx}]")
+            continue
+        entry = dict(item)
+        original_usage = entry.get("usage")
+        normalized_usage = normalize_video_reference_usage(original_usage)
+        if original_usage != normalized_usage:
+            notes.append(f'normalized video_references[{idx}].usage from "{original_usage}" to "{normalized_usage}"')
+        entry["usage"] = normalized_usage
+        if not str(entry.get("source_type", "")).strip():
+            if normalized_usage == "first_frame":
+                entry["source_type"] = "frame"
+                entry.setdefault("source_id", "first_frame")
+            elif normalized_usage == "reference_target_state":
+                entry["source_type"] = "frame"
+                entry.setdefault("source_id", "target_state")
+        normalized.append(entry)
+    return normalized, notes
+
+
+def infer_video_references(shot: dict[str, Any], *, is_last_in_scene: bool) -> list[dict[str, Any]]:
+    refs: list[dict[str, Any]] = [
+        {"source_type": "frame", "source_id": "first_frame", "usage": "first_frame"},
+        {"source_type": "scene", "usage": "reference_composition"},
+    ]
+
+    characters_in_shot = shot.get("characters_in_shot", [])
+    if isinstance(characters_in_shot, list):
+        for char_id in characters_in_shot:
+            cleaned = str(char_id).strip()
+            if cleaned:
+                refs.append(
+                    {
+                        "source_type": "character",
+                        "source_id": cleaned,
+                        "usage": "reference_character",
+                        "subject": cleaned,
+                    }
+                )
+
+    props_in_shot = shot.get("props_in_shot", [])
+    if isinstance(props_in_shot, list):
+        for prop_id in props_in_shot:
+            cleaned = str(prop_id).strip()
+            if cleaned:
+                refs.append(
+                    {
+                        "source_type": "prop",
+                        "source_id": cleaned,
+                        "usage": "reference_prop",
+                        "subject": cleaned,
+                    }
+                )
+
+    keyframes = shot.get("keyframes", [])
+    if isinstance(keyframes, list):
+        for idx, item in enumerate(keyframes, start=1):
+            if not isinstance(item, dict):
+                continue
+            stage = str(item.get("stage") or item.get("goal") or "").strip()
+            ref: dict[str, Any] = {
+                "source_type": "stage",
+                "source_id": str(idx),
+                "usage": "reference_stage",
+            }
+            if stage:
+                ref["stage"] = stage
+            refs.append(ref)
+
+    if should_generate_target_state_reference(shot, is_last_in_scene=is_last_in_scene):
+        refs.append({"source_type": "frame", "source_id": "target_state", "usage": "reference_target_state"})
+
+    return refs
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run xyz-video-skill execution pipeline")
     parser.add_argument("--story", help="Optional story.json path (validated only)")
@@ -128,7 +232,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--skip_compose", action="store_true", help="Skip video composition")
     parser.add_argument("--no_api", action="store_true", help="Pass through no-api mode to ad_assets")
     parser.add_argument("--parallel", type=int, default=4, help="Parallelism for asset generation")
-    parser.add_argument("--review_mode", choices=["metrics_only", "hybrid_judge"], help="Quality review mode for asset generation")
+    parser.add_argument("--review_mode", choices=["metrics_only", "hybrid_judge", "director_review"], help="Quality review mode for asset generation")
+    parser.add_argument("--video_only", action="store_true", help="Debug mode: skip image generation, only generate videos (images must exist)")
     parser.add_argument("--image_width", type=int, default=1024, help="Image width for generated assets")
     parser.add_argument("--image_height", type=int, default=1024, help="Image height for generated assets")
     parser.add_argument("--verbose", action="store_true", help="Verbose logging")
@@ -206,6 +311,8 @@ def normalize_storyboard(
         "character_ref_dir": str(character_ref_dir) if character_ref_dir else None,
         "characters": {},
         "shot_type_backfilled": [],
+        "video_references_backfilled": [],
+        "video_references_normalized": [],
     }
     migration_report: dict[str, Any] = {
         "storyboard": str(storyboard_path),
@@ -214,6 +321,8 @@ def normalize_storyboard(
         "summary": {
             "shot_count": 0,
             "shot_type_backfilled_count": 0,
+            "video_references_backfilled_count": 0,
+            "video_references_normalized_count": 0,
         },
         "shot_migrations": [],
     }
@@ -269,9 +378,10 @@ def normalize_storyboard(
             shots = scene.get("shots", [])
             if not isinstance(shots, list):
                 continue
-            for shot in shots:
+            for shot_index, shot in enumerate(shots):
                 if not isinstance(shot, dict):
                     continue
+                is_last_in_scene = shot_index == len(shots) - 1
                 migration_report["summary"]["shot_count"] += 1
                 original_shot_type = str(shot.get("shot_type", "")).strip() or None
                 shot_id = shot.get("id")
@@ -282,25 +392,53 @@ def normalize_storyboard(
                     "original_shot_type": original_shot_type,
                     "final_shot_type": original_shot_type,
                     "subject_constraints_present": isinstance(shot.get("subject_constraints"), dict),
+                    "original_video_references_present": isinstance(shot.get("video_references"), list),
                     "notes": [],
                 }
                 if original_shot_type:
                     migration_entry["notes"].append("shot_type already present; kept as-is")
-                    migration_report["shot_migrations"].append(migration_entry)
-                    continue
-                inferred, reason = infer_legacy_shot_type(shot)
-                shot["shot_type"] = inferred
-                migration_entry["final_shot_type"] = inferred
-                migration_entry["notes"].append(f"backfilled shot_type because {reason}")
-                binding_report["shot_type_backfilled"].append(
-                    {
-                        "shot_id": shot_id,
-                        "scene_id": scene_id,
-                        "inferred_shot_type": inferred,
-                        "reason": reason,
-                    }
-                )
-                migration_report["summary"]["shot_type_backfilled_count"] += 1
+                else:
+                    inferred, reason = infer_legacy_shot_type(shot)
+                    shot["shot_type"] = inferred
+                    migration_entry["final_shot_type"] = inferred
+                    migration_entry["notes"].append(f"backfilled shot_type because {reason}")
+                    binding_report["shot_type_backfilled"].append(
+                        {
+                            "shot_id": shot_id,
+                            "scene_id": scene_id,
+                            "inferred_shot_type": inferred,
+                            "reason": reason,
+                        }
+                    )
+                    migration_report["summary"]["shot_type_backfilled_count"] += 1
+
+                explicit_video_references = shot.get("video_references")
+                if isinstance(explicit_video_references, list) and explicit_video_references:
+                    normalized_refs, notes = normalize_explicit_video_references(explicit_video_references)
+                    shot["video_references"] = normalized_refs
+                    if notes:
+                        migration_entry["notes"].extend(notes)
+                        binding_report["video_references_normalized"].append(
+                            {
+                                "shot_id": shot_id,
+                                "scene_id": scene_id,
+                                "notes": notes,
+                            }
+                        )
+                        migration_report["summary"]["video_references_normalized_count"] += 1
+                else:
+                    inferred_refs = infer_video_references(shot, is_last_in_scene=is_last_in_scene)
+                    shot["video_references"] = inferred_refs
+                    migration_entry["notes"].append("backfilled video_references from shot fields and scene context")
+                    binding_report["video_references_backfilled"].append(
+                        {
+                            "shot_id": shot_id,
+                            "scene_id": scene_id,
+                            "video_references": inferred_refs,
+                        }
+                    )
+                    migration_report["summary"]["video_references_backfilled_count"] += 1
+
                 migration_report["shot_migrations"].append(migration_entry)
 
     normalized_path = normalized_dir / "storyboard.json"
@@ -407,6 +545,8 @@ def main() -> None:
         ]
         if args.review_mode:
             command.extend(["--review_mode", args.review_mode])
+        if args.video_only:
+            command.append("--video_only")
         if args.no_api:
             command.append("--no_api")
         if args.verbose:

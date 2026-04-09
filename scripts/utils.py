@@ -14,6 +14,13 @@ from typing import Any, Dict
 import yaml
 
 
+def _json_default(value: Any) -> Any:
+    """为 JSON 序列化补充常见本地类型支持。"""
+    if isinstance(value, Path):
+        return str(value)
+    raise TypeError(f"Object of type {value.__class__.__name__} is not JSON serializable")
+
+
 def setup_logging(verbose: bool = False) -> None:
     """初始化日志。"""
     level = logging.DEBUG if verbose else logging.INFO
@@ -89,7 +96,7 @@ def read_json(path: Path) -> Any:
 def write_json(path: Path, data: Any) -> Path:
     """写入 JSON 文件（中文可读）。"""
     ensure_dir(path.parent)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8")
     return path
 
 
@@ -148,6 +155,7 @@ _ENV_KEY_MAP: Dict[str, tuple[str, str]] = {
     "apimart": ("APIMART_API_KEY", "APIMART_API_BASE"),
     "fal": ("FAL_KEY", "FAL_API_BASE"),
     "byteplus": ("BYTEPLUS_API_KEY", "BYTEPLUS_API_BASE"),
+    "evolink": ("EVOLINK_API_KEY", "EVOLINK_API_BASE"),
     "openrouter": ("OPENROUTER_API_KEY", "OPENROUTER_API_BASE"),
 }
 
@@ -157,6 +165,7 @@ _CFG_KEY_MAP: Dict[str, tuple[str, str]] = {
     "apimart": ("ApiMart.api_key", "ApiMart.api_base"),
     "fal": ("fal.api_key", "fal.api_base"),
     "byteplus": ("byteplus.api_key", "byteplus.api_base"),
+    "evolink": ("evolink.api_key", "evolink.api_base"),
     "openrouter": ("openrouter.api_key", "openrouter.api_base"),
 }
 
