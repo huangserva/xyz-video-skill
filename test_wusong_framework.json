@@ -1,0 +1,72 @@
+{
+  "title": "武松打虎",
+  "synopsis": "武松夜过景阳冈，突遭猛虎袭击，最终赤手空拳将其击毙。",
+  "narrative": "暮色渐沉，武松提着哨棒独自穿过景阳冈，酒意未散，却仍步伐沉稳。山风掠过枯枝，林间忽然传来低沉兽吼，他停步侧耳，警觉地握紧木棒。就在他抬头的一瞬，斑斓猛虎自乱石坡后猛然跃下，挟着腥风直扑面门。武松闪身避开，哨棒顺势横扫，却被虎势震得脱手飞出。失了兵器，他反而怒气陡起，翻身扑上，与猛虎在枯叶与碎石间滚作一团。虎爪连挥，獠牙逼近，他死死扼住虎颈，一拳接一拳猛击额骨。伴着野兽最后一声嘶吼，虎身终于瘫倒不动。夜风吹散尘土，武松喘息着起身，立于死虎之前，山林重新归于寂静。",
+  "visual_style_anchor": "Chinese ink action cinema style, dusk mountain forest, cold moonlit haze, swirling dust and fallen leaves, muscular hand-to-hand combat, dramatic brush-texture rocks and pines, high-contrast cinematic framing",
+  "total_duration": 34,
+  "story_time": "dusk",
+  "suggested_characters": [
+    {
+      "id": "wusong",
+      "name": "武松",
+      "role_type": "protagonist",
+      "personality": "豪烈刚猛、胆气过人、临危不惧",
+      "appearance": "A rugged Song-dynasty warrior in his prime, broad-shouldered and powerfully built, sun-browned skin, stern thick brows, sharp determined eyes, short black hair tied loosely back, faint stubble on jaw, wearing a weathered off-white inner robe under a dark blue sleeveless outer vest, wide leather belt, cloth leg wraps, straw sandals, carrying a wooden staff, posture steady and explosive.",
+      "default_clothing": "Weathered off-white robe, dark blue sleeveless vest, brown leather belt, cloth leg wraps, straw sandals.",
+      "key_features": [
+        "broad muscular build",
+        "dark blue sleeveless outer vest",
+        "wooden staff"
+      ],
+      "ref_description": "Wu Song, a powerful Song-dynasty martial hero, rugged face, muscular body, dark blue sleeveless vest over pale robe, carrying a wooden staff, fierce and fearless."
+    },
+    {
+      "id": "tiger",
+      "name": "猛虎",
+      "role_type": "antagonist",
+      "personality": "凶猛暴烈、迅疾致命、压迫感极强",
+      "appearance": "A massive ferocious tiger with vivid orange fur, bold black stripes, white fur around muzzle and chest, heavy forelimbs, powerful shoulders, wide jaws showing long curved fangs, bright predatory eyes, thick tail lashing behind, body low and coiled with explosive force.",
+      "default_clothing": "Natural tiger fur with orange, black, and white markings.",
+      "key_features": [
+        "massive shoulders",
+        "wide jaws with long fangs",
+        "bold black stripes"
+      ],
+      "ref_description": "A huge ferocious tiger with bright orange fur, black stripes, white muzzle, powerful shoulders, long fangs, and a deadly predatory stare."
+    }
+  ],
+  "suggested_locations": [
+    {
+      "name": "景阳冈山道",
+      "description": "A winding mountain trail cutting through a dark forested ridge, jagged rocks, twisted pine roots, dry leaves covering the ground, dusk haze thickening between trunks, patches of moonlight and deep shadows creating danger and tension.",
+      "environment_type": "natural"
+    },
+    {
+      "name": "乱石坡林隙",
+      "description": "A broken clearing beside a rocky slope, scattered boulders, exposed roots, torn leaves and dust rising under violent movement, close trees hemming the space into a brutal natural arena.",
+      "environment_type": "natural"
+    }
+  ],
+  "scenes": [
+    {
+      "name": "夜过景阳冈",
+      "location": "景阳冈山道",
+      "narrative_segment": "暮色渐沉，武松提着哨棒独自穿过景阳冈，酒意未散，却仍步伐沉稳。山风掠过枯枝，林间忽然传来低沉兽吼，他停步侧耳，警觉地握紧木棒。",
+      "summary": "武松夜行山道，察觉林中异动",
+      "visual_description": "Dusk mountain path, cold haze, wind through branches, lone warrior advancing with growing alertness.",
+      "emotion_arc": "沉稳微醺 → 警觉紧绷",
+      "characters_in_scene": ["wusong"],
+      "duration": 12
+    },
+    {
+      "name": "猛虎突袭",
+      "location": "乱石坡林隙",
+      "narrative_segment": "就在他抬头的一瞬，斑斓猛虎自乱石坡后猛然跃下，挟着腥风直扑面门。武松闪身避开，哨棒顺势横扫，却被虎势震得脱手飞出。失了兵器，他反而怒气陡起，翻身扑上，与猛虎在枯叶与碎石间滚作一团。虎爪连挥，獠牙逼近，他死死扼住虎颈，一拳接一拳猛击额骨。伴着野兽最后一声嘶吼，虎身终于瘫倒不动。夜风吹散尘土，武松喘息着起身，立于死虎之前，山林重新归于寂静。",
+      "summary": "武松赤手空拳与猛虎恶斗并将其击毙",
+      "visual_description": "Rocky forest clearing with explosive leaps, dust, leaves, brutal close combat and a grim aftermath.",
+      "emotion_arc": "惊险骤变 → 狂烈搏杀 → 冷静余震",
+      "characters_in_scene": ["wusong", "tiger"],
+      "duration": 22
+    }
+  ]
+}

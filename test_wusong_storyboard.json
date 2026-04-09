@@ -1,0 +1,620 @@
+{
+  "title": "武松打虎",
+  "narrative": "暮色渐沉，武松提着哨棒独自穿过景阳冈，酒意未散，却仍步伐沉稳。山风掠过枯枝，林间忽然传来低沉兽吼，他停步侧耳，警觉地握紧木棒。就在他抬头的一瞬，斑斓猛虎自乱石坡后猛然跃下，挟着腥风直扑面门。武松闪身避开，哨棒顺势横扫，却被虎势震得脱手飞出。失了兵器，他反而怒气陡起，翻身扑上，与猛虎在枯叶与碎石间滚作一团。虎爪连挥，獠牙逼近，他死死扼住虎颈，一拳接一拳猛击额骨。伴着野兽最后一声嘶吼，虎身终于瘫倒不动。夜风吹散尘土，武松喘息着起身，立于死虎之前，山林重新归于寂静。",
+  "style_anchor": "Chinese ink action cinema style, dusk mountain forest, cold moonlit haze, swirling dust and fallen leaves, muscular hand-to-hand combat, dramatic brush-texture rocks and pines, high-contrast cinematic framing",
+  "total_duration": 34,
+  "character_ref_dir": "character_refs",
+  "characters": {
+    "wusong": {
+      "ref_image": "character_refs/wusong.png",
+      "ref_description": "Wu Song, a powerful Song-dynasty martial hero, rugged face, muscular body, dark blue sleeveless vest over pale robe, carrying a wooden staff, fierce and fearless.",
+      "appearance": "A rugged Song-dynasty warrior in his prime, broad-shouldered and powerfully built, sun-browned skin, stern thick brows, sharp determined eyes, short black hair tied loosely back, faint stubble on jaw, wearing a weathered off-white inner robe under a dark blue sleeveless outer vest, wide leather belt, cloth leg wraps, straw sandals, carrying a wooden staff, posture steady and explosive."
+    },
+    "tiger": {
+      "ref_image": "character_refs/tiger.png",
+      "ref_description": "A huge ferocious tiger with bright orange fur, black stripes, white muzzle, powerful shoulders, long fangs, and a deadly predatory stare.",
+      "appearance": "A massive ferocious tiger with vivid orange fur, bold black stripes, white fur around muzzle and chest, heavy forelimbs, powerful shoulders, wide jaws showing long curved fangs, bright predatory eyes, thick tail lashing behind, body low and coiled with explosive force."
+    }
+  },
+  "scenes": [
+    {
+      "id": "scene_01",
+      "name": "夜过景阳冈",
+      "location": "景阳冈山道",
+      "narrative_segment": "暮色渐沉，武松提着哨棒独自穿过景阳冈，酒意未散，却仍步伐沉稳。山风掠过枯枝，林间忽然传来低沉兽吼，他停步侧耳，警觉地握紧木棒。",
+      "summary": "武松夜行山道，察觉林中异动",
+      "visual_description": "Dusk mountain path, cold haze, lone warrior moving through dangerous forest shadows.",
+      "emotion_arc": "沉稳微醺 → 警觉紧绷",
+      "characters_in_scene": [
+        "wusong"
+      ],
+      "lighting": "cold dusk light, 4800K, dim moonlit haze with deep forest shadow",
+      "weather": "dry mountain wind, faint mist among trees",
+      "environment_description": "A narrow mountain trail winding through dense pines and jagged rocks. Fallen leaves scrape across the ground in gusts of wind. The last dusk light fades behind the ridge, leaving pale haze and uneven moonlit patches between dark trunks.",
+      "props": [
+        "wooden staff",
+        "twisted pine roots",
+        "fallen leaves",
+        "jagged rocks"
+      ],
+      "duration": 12,
+      "shots": [
+        {
+          "id": 1,
+          "characters_in_shot": [
+            "wusong"
+          ],
+          "narrative_segment": "暮色渐沉，武松提着哨棒独自穿过景阳冈，酒意未散，却仍步伐沉稳。",
+          "scene_prompt": "Wide establishing shot. Wu Song walks alone along a narrow ridge path at dusk, one hand carrying a wooden staff over his shoulder. Dark pines and broken rocks surround him, and dry leaves drag across the path in the wind.",
+          "end_frame_description": "Wu Song has advanced deeper into the trail, his shoulders squared and his grip on the wooden staff firmer as the forest around him grows darker.",
+          "action_prompt": "He walks steadily up the mountain path with restrained confidence, robe hem and loose hair moving in the mountain wind.",
+          "camera_movement": "slow tracking push-in",
+          "camera_technical": "35mm, f/2.8",
+          "atmosphere_lighting": "cold dusk sidelight, thin haze diffusion, strong shadow contrast",
+          "physics_note": "wind stirs leaves and robe fabric, dust lightly lifts from the trail",
+          "speed_baseline": "1.0x",
+          "narration": "",
+          "estimated_duration": 6,
+          "chain_from_previous": false,
+          "continuity_mode": "scene_end",
+          "transition_in": null,
+          "consistency_anchors": {
+            "characters": [
+              {
+                "id": "wusong",
+                "must_show": [
+                  "dark blue sleeveless vest",
+                  "wooden staff",
+                  "muscular build"
+                ],
+                "expression": "calm but alert"
+              }
+            ],
+            "environment": [
+              "mountain trail",
+              "pine forest",
+              "jagged rocks",
+              "fallen leaves"
+            ]
+          },
+          "motion_control": {
+            "subject_facing": "away_from_camera",
+            "camera_relation": "rear_three_quarter",
+            "movement_direction": "forward",
+            "screen_trajectory": "lower_left_to_upper_right",
+            "target": "deeper_forest_path",
+            "distance_to_target": "getting_closer",
+            "phase_beats": [
+              "walking into the ridge",
+              "entering darker forest",
+              "tightening grip on staff"
+            ]
+          },
+          "video_references": [
+            {
+              "source_type": "frame",
+              "source_id": "first_frame",
+              "usage": "first_frame"
+            },
+            {
+              "source_type": "scene",
+              "usage": "reference_composition"
+            },
+            {
+              "source_type": "character",
+              "source_id": "wusong",
+              "usage": "reference_character",
+              "subject": "wusong"
+            }
+          ],
+          "shot_type": "visible_subject"
+        },
+        {
+          "id": 2,
+          "characters_in_shot": [
+            "wusong"
+          ],
+          "narrative_segment": "山风掠过枯枝，林间忽然传来低沉兽吼，他停步侧耳，警觉地握紧木棒。",
+          "scene_prompt": "Medium shot in the forest path. Wu Song halts abruptly as a distant tiger roar rolls through the trees. He turns his head slightly, eyes narrowing, both hands tightening around the wooden staff while branches sway behind him.",
+          "end_frame_description": "Wu Song stands rooted in a guarded stance, staff angled before his body, listening into the darkness as the tension in the forest sharpens.",
+          "action_prompt": "He stops, listens, and shifts into a ready stance, raising the wooden staff as the unseen danger closes in.",
+          "camera_movement": "slow push-in",
+          "camera_technical": "50mm, f/2.0",
+          "atmosphere_lighting": "low moonlit rim light, cold haze, deep forest blacks",
+          "physics_note": "branches sway in gusts, leaves scrape the ground, breath visible in cool air",
+          "speed_baseline": "0.9x",
+          "narration": "",
+          "estimated_duration": 6,
+          "chain_from_previous": true,
+          "continuity_mode": "strict",
+          "keyframes": [
+            {
+              "timestamp": 3.0,
+              "description": "Wu Song has fully stopped and turned his attention toward the unseen roar, gripping the staff across his body in a defensive guard"
+            }
+          ],
+          "transition_in": {
+            "type": "cut",
+            "duration": 0.2
+          },
+          "consistency_anchors": {
+            "characters": [
+              {
+                "id": "wusong",
+                "must_show": [
+                  "stern brows",
+                  "dark blue vest",
+                  "wooden staff"
+                ],
+                "expression": "sharply alert"
+              }
+            ],
+            "environment": [
+              "dense dark pines",
+              "windblown leaves",
+              "cold dusk haze"
+            ]
+          },
+          "motion_control": {
+            "subject_facing": "toward_camera",
+            "camera_relation": "front_of_subject",
+            "movement_direction": "holding_position",
+            "screen_trajectory": "center_holding",
+            "target": "unseen_threat_in_forest",
+            "distance_to_target": "holding_position",
+            "phase_beats": [
+              "walking",
+              "hearing the roar",
+              "freezing into guard stance"
+            ]
+          },
+          "video_references": [
+            {
+              "source_type": "frame",
+              "source_id": "first_frame",
+              "usage": "first_frame"
+            },
+            {
+              "source_type": "scene",
+              "usage": "reference_composition"
+            },
+            {
+              "source_type": "character",
+              "source_id": "wusong",
+              "usage": "reference_character",
+              "subject": "wusong"
+            },
+            {
+              "source_type": "stage",
+              "source_id": "1",
+              "usage": "reference_stage"
+            },
+            {
+              "source_type": "frame",
+              "source_id": "target_state",
+              "usage": "reference_target_state"
+            }
+          ],
+          "shot_type": "visible_subject"
+        }
+      ]
+    },
+    {
+      "id": "scene_02",
+      "name": "猛虎突袭",
+      "location": "乱石坡林隙",
+      "narrative_segment": "就在他抬头的一瞬，斑斓猛虎自乱石坡后猛然跃下，挟着腥风直扑面门。武松闪身避开，哨棒顺势横扫，却被虎势震得脱手飞出。失了兵器，他反而怒气陡起，翻身扑上，与猛虎在枯叶与碎石间滚作一团。虎爪连挥，獠牙逼近，他死死扼住虎颈，一拳接一拳猛击额骨。伴着野兽最后一声嘶吼，虎身终于瘫倒不动。夜风吹散尘土，武松喘息着起身，立于死虎之前，山林重新归于寂静。",
+      "summary": "猛虎扑杀，武松赤手击毙猛虎",
+      "visual_description": "Explosive tiger ambush, violent close combat in a rocky forest clearing, dust and leaves whipping through moonlit darkness.",
+      "emotion_arc": "惊险骤变 → 狂烈搏杀 → 冷静余震",
+      "characters_in_scene": [
+        "wusong",
+        "tiger"
+      ],
+      "lighting": "cold moonlight with drifting dust, high contrast, brief warm highlights on fur and skin",
+      "weather": "dry wind, flying dust and leaves",
+      "environment_description": "A broken forest clearing beside a rocky slope. Large boulders, torn roots, and a carpet of dead leaves turn the ground into a harsh fighting arena. Pale moonlight slices through dust and branches while the background trees crowd in like black walls.",
+      "props": [
+        "rocky slope",
+        "dead leaves",
+        "broken branch debris",
+        "fallen wooden staff"
+      ],
+      "duration": 22,
+      "shots": [
+        {
+          "id": 3,
+          "characters_in_shot": [
+            "wusong",
+            "tiger"
+          ],
+          "narrative_segment": "就在他抬头的一瞬，斑斓猛虎自乱石坡后猛然跃下，挟着腥风直扑面门。武松闪身避开，哨棒顺势横扫，却被虎势震得脱手飞出。",
+          "scene_prompt": "Wide action shot in the rocky clearing. A massive tiger explodes from the slope in a violent leap toward Wu Song's face. Wu Song twists aside and sweeps his wooden staff, but the force of the attack sends the staff flying from his hands.",
+          "end_frame_description": "The tiger lands with brutal force as the wooden staff spins away through the air, and Wu Song drops low into a desperate evasive turn.",
+          "action_prompt": "The tiger lunges in a single explosive pounce while Wu Song dodges, swings the staff, and loses his weapon in the collision.",
+          "camera_movement": "rapid tracking swing",
+          "camera_technical": "28mm, f/2.8",
+          "atmosphere_lighting": "hard moonlit edges, airborne dust, violent shadow streaks",
+          "physics_note": "staff spins away, leaves and grit burst upward, tiger fur and robe whip in motion",
+          "speed_baseline": "1.2x",
+          "narration": "",
+          "estimated_duration": 6,
+          "chain_from_previous": false,
+          "continuity_mode": "strict",
+          "keyframes": [
+            {
+              "timestamp": 2.5,
+              "description": "The tiger is fully airborne in front of Wu Song while he twists aside, staff halfway through a defensive sweep"
+            },
+            {
+              "timestamp": 4.5,
+              "description": "The wooden staff has flown free and the tiger is landing hard as Wu Song drops into a low evasive posture"
+            }
+          ],
+          "transition_in": {
+            "type": "cut",
+            "duration": 0.1
+          },
+          "consistency_anchors": {
+            "characters": [
+              {
+                "id": "wusong",
+                "must_show": [
+                  "dark blue vest",
+                  "muscular build",
+                  "wooden staff"
+                ],
+                "expression": "focused shock"
+              },
+              {
+                "id": "tiger",
+                "must_show": [
+                  "orange fur",
+                  "black stripes",
+                  "wide fanged jaws"
+                ],
+                "expression": "ferocious attack"
+              }
+            ],
+            "environment": [
+              "rocky slope",
+              "dust",
+              "dead leaves",
+              "dark trees"
+            ]
+          },
+          "motion_control": {
+            "subject_facing": "toward_camera",
+            "camera_relation": "front_of_subject",
+            "movement_direction": "toward_target",
+            "screen_trajectory": "upper_right_to_lower_left",
+            "target": "wusong_face_line",
+            "distance_to_target": "getting_closer",
+            "phase_beats": [
+              "tiger emerges",
+              "midair pounce",
+              "staff knocked away"
+            ]
+          },
+          "video_references": [
+            {
+              "source_type": "frame",
+              "source_id": "first_frame",
+              "usage": "first_frame"
+            },
+            {
+              "source_type": "scene",
+              "usage": "reference_composition"
+            },
+            {
+              "source_type": "character",
+              "source_id": "wusong",
+              "usage": "reference_character",
+              "subject": "wusong"
+            },
+            {
+              "source_type": "character",
+              "source_id": "tiger",
+              "usage": "reference_character",
+              "subject": "tiger"
+            },
+            {
+              "source_type": "stage",
+              "source_id": "1",
+              "usage": "reference_stage"
+            },
+            {
+              "source_type": "stage",
+              "source_id": "2",
+              "usage": "reference_stage"
+            },
+            {
+              "source_type": "frame",
+              "source_id": "target_state",
+              "usage": "reference_target_state"
+            }
+          ],
+          "shot_type": "visible_subject"
+        },
+        {
+          "id": 4,
+          "characters_in_shot": [
+            "wusong",
+            "tiger"
+          ],
+          "narrative_segment": "失了兵器，他反而怒气陡起，翻身扑上，与猛虎在枯叶与碎石间滚作一团。",
+          "scene_prompt": "Medium-wide combat shot. Unarmed now, Wu Song surges forward with furious force and tackles the tiger. Man and beast crash together, rolling across rocks and dead leaves in a blur of dust, claws, fists, and tangled bodies.",
+          "end_frame_description": "Wu Song has gained partial top position over the tiger amid churning dust, one arm locking around its neck as both bodies strain violently.",
+          "action_prompt": "He throws himself at the tiger, grapples chest to chest, and rolls with it across the ground in brutal hand-to-beast combat.",
+          "camera_movement": "orbital tracking",
+          "camera_technical": "35mm, f/2.5",
+          "atmosphere_lighting": "moonlit dust bloom, high contrast, blurred forest background",
+          "physics_note": "bodies slam over rocks, leaves scatter, dust plumes around the grapple",
+          "speed_baseline": "1.1x",
+          "narration": "",
+          "estimated_duration": 6,
+          "chain_from_previous": true,
+          "continuity_mode": "strict",
+          "transition_in": {
+            "type": "cut",
+            "duration": 0.1
+          },
+          "consistency_anchors": {
+            "characters": [
+              {
+                "id": "wusong",
+                "must_show": [
+                  "off-white robe",
+                  "dark blue vest",
+                  "bare-handed grapple"
+                ],
+                "expression": "furious determination"
+              },
+              {
+                "id": "tiger",
+                "must_show": [
+                  "coiling body",
+                  "claws",
+                  "striped torso"
+                ],
+                "expression": "savage resistance"
+              }
+            ],
+            "environment": [
+              "dead leaves",
+              "rocks",
+              "flying dust"
+            ]
+          },
+          "motion_control": {
+            "subject_facing": "toward_camera",
+            "camera_relation": "side_of_subject",
+            "movement_direction": "toward_target",
+            "screen_trajectory": "center_spiral",
+            "target": "tiger_torso",
+            "distance_to_target": "holding_position",
+            "phase_beats": [
+              "weapon lost",
+              "angry lunge",
+              "rolling grapple"
+            ]
+          },
+          "video_references": [
+            {
+              "source_type": "frame",
+              "source_id": "first_frame",
+              "usage": "first_frame"
+            },
+            {
+              "source_type": "scene",
+              "usage": "reference_composition"
+            },
+            {
+              "source_type": "character",
+              "source_id": "wusong",
+              "usage": "reference_character",
+              "subject": "wusong"
+            },
+            {
+              "source_type": "character",
+              "source_id": "tiger",
+              "usage": "reference_character",
+              "subject": "tiger"
+            },
+            {
+              "source_type": "frame",
+              "source_id": "target_state",
+              "usage": "reference_target_state"
+            }
+          ],
+          "shot_type": "visible_subject"
+        },
+        {
+          "id": 5,
+          "characters_in_shot": [
+            "wusong",
+            "tiger"
+          ],
+          "narrative_segment": "虎爪连挥，獠牙逼近，他死死扼住虎颈，一拳接一拳猛击额骨。伴着野兽最后一声嘶吼，虎身终于瘫倒不动。",
+          "scene_prompt": "Intense close combat shot. Wu Song pins the tiger's body down with sheer strength, one forearm crushing its neck while his other fist crashes repeatedly into its skull. The tiger thrashes, claws slashing uselessly, then finally collapses under the barrage.",
+          "end_frame_description": "The tiger has gone limp beneath Wu Song, whose raised fist pauses in the dusty moonlight as the final violent motion drains from the scene.",
+          "action_prompt": "He locks the tiger by the throat and delivers repeated crushing punches until the beast's resistance collapses completely.",
+          "camera_movement": "heavy handheld push-in",
+          "camera_technical": "50mm, f/2.0",
+          "atmosphere_lighting": "sharp moonlit highlights on sweat, fur, and dust",
+          "physics_note": "dust shakes loose with each impact, tiger body convulses then slackens",
+          "speed_baseline": "1.0x",
+          "narration": "",
+          "estimated_duration": 5,
+          "chain_from_previous": true,
+          "continuity_mode": "strict",
+          "transition_in": {
+            "type": "cut",
+            "duration": 0.1
+          },
+          "consistency_anchors": {
+            "characters": [
+              {
+                "id": "wusong",
+                "must_show": [
+                  "raised fist",
+                  "sweat and dust",
+                  "dominant pinning posture"
+                ],
+                "expression": "grim relentless force"
+              },
+              {
+                "id": "tiger",
+                "must_show": [
+                  "pinned striped body",
+                  "open jaws",
+                  "fading resistance"
+                ],
+                "expression": "dying struggle"
+              }
+            ],
+            "environment": [
+              "dust cloud",
+              "rocky ground",
+              "scattered leaves"
+            ]
+          },
+          "motion_control": {
+            "subject_facing": "toward_camera",
+            "camera_relation": "front_of_subject",
+            "movement_direction": "downward",
+            "screen_trajectory": "center_holding",
+            "target": "tiger_head",
+            "distance_to_target": "holding_position",
+            "phase_beats": [
+              "pinning the neck",
+              "repeated punches",
+              "tiger goes limp"
+            ]
+          },
+          "video_references": [
+            {
+              "source_type": "frame",
+              "source_id": "first_frame",
+              "usage": "first_frame"
+            },
+            {
+              "source_type": "scene",
+              "usage": "reference_composition"
+            },
+            {
+              "source_type": "character",
+              "source_id": "wusong",
+              "usage": "reference_character",
+              "subject": "wusong"
+            },
+            {
+              "source_type": "character",
+              "source_id": "tiger",
+              "usage": "reference_character",
+              "subject": "tiger"
+            },
+            {
+              "source_type": "frame",
+              "source_id": "target_state",
+              "usage": "reference_target_state"
+            }
+          ],
+          "shot_type": "visible_subject"
+        },
+        {
+          "id": 6,
+          "characters_in_shot": [
+            "wusong",
+            "tiger"
+          ],
+          "narrative_segment": "夜风吹散尘土，武松喘息着起身，立于死虎之前，山林重新归于寂静。",
+          "scene_prompt": "Wide aftermath shot. In the moonlit clearing, Wu Song rises slowly from beside the dead tiger, chest heaving, clothes dusty and torn. The wind lifts the last dust from the ground as the forest falls silent around him.",
+          "end_frame_description": "Wu Song stands over the tiger's corpse in stillness, breathing hard but unbroken, while the clearing returns to cold silence.",
+          "action_prompt": "He pushes himself upright, steadies his breath, and stands over the fallen tiger as the dust and leaves settle back to the ground.",
+          "camera_movement": "slow crane back",
+          "camera_technical": "35mm, f/2.8",
+          "atmosphere_lighting": "cold moonlight, fading dust, dark still forest",
+          "physics_note": "dust disperses, leaves settle, clothing hangs heavy after the fight",
+          "speed_baseline": "0.8x",
+          "narration": "",
+          "estimated_duration": 5,
+          "chain_from_previous": true,
+          "continuity_mode": "scene_end",
+          "transition_in": {
+            "type": "cut",
+            "duration": 0.2
+          },
+          "consistency_anchors": {
+            "characters": [
+              {
+                "id": "wusong",
+                "must_show": [
+                  "dusty torn clothing",
+                  "upright stance",
+                  "heavy breathing"
+                ],
+                "expression": "spent but victorious"
+              },
+              {
+                "id": "tiger",
+                "must_show": [
+                  "collapsed body",
+                  "motionless striped fur"
+                ],
+                "expression": "lifeless"
+              }
+            ],
+            "environment": [
+              "silent clearing",
+              "settling dust",
+              "moonlit rocks"
+            ]
+          },
+          "motion_control": {
+            "subject_facing": "toward_camera",
+            "camera_relation": "front_of_subject",
+            "movement_direction": "upward",
+            "screen_trajectory": "center_holding",
+            "target": "standing_over_tiger",
+            "distance_to_target": "holding_position",
+            "phase_beats": [
+              "rising from the ground",
+              "catching breath",
+              "standing over the tiger"
+            ]
+          },
+          "video_references": [
+            {
+              "source_type": "frame",
+              "source_id": "first_frame",
+              "usage": "first_frame"
+            },
+            {
+              "source_type": "scene",
+              "usage": "reference_composition"
+            },
+            {
+              "source_type": "character",
+              "source_id": "wusong",
+              "usage": "reference_character",
+              "subject": "wusong"
+            },
+            {
+              "source_type": "character",
+              "source_id": "tiger",
+              "usage": "reference_character",
+              "subject": "tiger"
+            },
+            {
+              "source_type": "frame",
+              "source_id": "target_state",
+              "usage": "reference_target_state"
+            }
+          ],
+          "shot_type": "visible_subject"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,593 @@
+{
+  "title": "石猴学艺",
+  "narrative": "花果山水帘洞中，石猴称王三百余年后，忽然醒悟生死无常，决心远渡重洋寻仙访道。历经艰辛，终于在灵台方寸山斜月三星洞拜得菩提祖师为师。祖师见他根骨奇特，赐法名孙悟空。悟空勤学苦练，白天随众师兄习文练武,夜晚独自参悟玄机。一日，祖师在课堂上敲击悟空头部三下，暗示他三更时分后堂相见。悟空心领神会，三更时分悄然来到祖师寝室。祖师传授他长生之术、七十二般变化和筋斗云神通。悟空天资聪颖，短短数年便练成绝世神功，一个筋斗便可翻越十万八千里。",
+  "style_anchor": "Chinese ink painting style, mystical mountain atmosphere, soft morning mist, warm candlelight in cave interiors, dynamic martial arts movements with flowing robes, ancient temple architecture",
+  "total_duration": 40,
+  "character_ref_dir": "character_refs",
+  "characters": {
+    "wukong": {
+      "ref_image": "character_refs/wukong.png",
+      "ref_description": "Young Sun Wukong in training attire, golden-brown monkey features, intelligent eyes, blue cloth robe, standing in martial arts ready stance",
+      "appearance": "A young monkey with golden-brown fur, bright intelligent eyes, wearing a simple blue cloth robe tied with hemp rope, bare feet, alert posture"
+    },
+    "patriarch": {
+      "ref_image": "character_refs/patriarch.png",
+      "ref_description": "Patriarch Bodhi, elderly Taoist master, long white beard, gray robes with cloud patterns, holding wooden staff, serene expression",
+      "appearance": "An elderly Taoist master with long white beard flowing to chest, serene wise eyes, wearing traditional gray Taoist robes with cloud patterns, wooden staff in hand, dignified bearing"
+    }
+  },
+  "scenes": [
+    {
+      "id": "scene_01",
+      "name": "拜师学艺",
+      "location": "斜月三星洞外",
+      "narrative_segment": "历经艰辛，终于在灵台方寸山斜月三星洞拜得菩提祖师为师。祖师见他根骨奇特，赐法名孙悟空。",
+      "summary": "孙悟空在山洞外向菩提祖师行拜师大礼",
+      "visual_description": "Misty mountain temple entrance at dawn, stone steps leading to cave, ancient pine trees",
+      "emotion_arc": "虔诚恭敬 → 激动期待",
+      "characters_in_scene": [
+        "wukong",
+        "patriarch"
+      ],
+      "lighting": "soft dawn light, 5500K, gentle side lighting from rising sun, misty atmosphere",
+      "weather": "morning mist, light fog rolling through mountains",
+      "environment_description": "Ancient cave temple entrance carved into misty mountain cliff face. Worn stone steps lead upward to the cave mouth. Gnarled pine trees cling to rocky outcrops. Distant mountain peaks emerge from sea of clouds below. Dawn light filters through mist creating ethereal atmosphere.",
+      "props": [
+        "stone steps",
+        "pine trees",
+        "cave entrance",
+        "mountain rocks"
+      ],
+      "duration": 15,
+      "shots": [
+        {
+          "id": 1,
+          "characters_in_shot": [
+            "wukong"
+          ],
+          "narrative_segment": "历经艰辛，终于在灵台方寸山斜月三星洞",
+          "scene_prompt": "Wide establishing shot. The monkey stands at the base of stone steps leading up misty mountain, gazing upward at the cave temple entrance above. Morning mist swirls around ancient pine trees. He holds a humble posture, travel-worn but determined.",
+          "end_frame_description": "The monkey has climbed halfway up the stone steps, now closer to the cave entrance. His posture shows both exhaustion from the journey and reverence as he approaches the sacred place.",
+          "action_prompt": "Slowly climbs the worn stone steps, one careful step at a time, occasionally pausing to steady himself, mist parting around his moving form",
+          "camera_movement": "slow push-in",
+          "camera_technical": "35mm, f/2.8",
+          "atmosphere_lighting": "soft dawn backlight, 5500K, light mist diffusion",
+          "physics_note": "mist particles swirling, cloth robe moving with steps",
+          "speed_baseline": "0.8x",
+          "narration": "",
+          "estimated_duration": 6,
+          "chain_from_previous": false,
+          "continuity_mode": "scene_end",
+          "transition_in": null,
+          "consistency_anchors": {
+            "characters": [
+              {
+                "id": "wukong",
+                "must_show": [
+                  "golden-brown fur",
+                  "blue cloth robe",
+                  "bare feet"
+                ],
+                "expression": "determined and reverent"
+              }
+            ],
+            "environment": [
+              "stone steps",
+              "misty mountain",
+              "pine trees",
+              "cave entrance above"
+            ]
+          },
+          "motion_control": {
+            "subject_facing": "away_from_camera",
+            "camera_relation": "rear_three_quarter",
+            "movement_direction": "upstairs",
+            "screen_trajectory": "lower_right_to_upper_left",
+            "target": "cave_entrance",
+            "distance_to_target": "getting_closer",
+            "phase_beats": [
+              "standing at foot of stairs",
+              "climbing midway",
+              "approaching cave entrance"
+            ]
+          },
+          "video_references": [
+            {
+              "source_type": "frame",
+              "source_id": "first_frame",
+              "usage": "first_frame"
+            },
+            {
+              "source_type": "scene",
+              "usage": "reference_composition"
+            },
+            {
+              "source_type": "character",
+              "source_id": "wukong",
+              "usage": "reference_character",
+              "subject": "wukong"
+            }
+          ],
+          "shot_type": "visible_subject"
+        },
+        {
+          "id": 2,
+          "characters_in_shot": [
+            "wukong",
+            "patriarch"
+          ],
+          "narrative_segment": "拜得菩提祖师为师。祖师见他根骨奇特，赐法名孙悟空。",
+          "scene_prompt": "Medium shot at cave entrance. The monkey kneels on stone ground before the standing Taoist master. The master holds his wooden staff, looking down at the kneeling disciple with penetrating yet kind eyes. Morning light illuminates them from behind.",
+          "end_frame_description": "The monkey remains kneeling, head bowed deeply in three kowtows. The master has raised one hand in blessing gesture, his expression showing acceptance and slight satisfaction.",
+          "action_prompt": "The monkey performs three deep kowtows, forehead touching stone ground each time, then remains in kneeling position. The master slowly raises his hand in blessing",
+          "camera_movement": "static",
+          "camera_technical": "50mm, f/2.0",
+          "atmosphere_lighting": "rim light from dawn sun, 5500K, creating silhouette effect with soft fill",
+          "physics_note": "robe fabric settling with each kowtow, dust motes in light beams",
+          "speed_baseline": "1.0x",
+          "narration": "",
+          "estimated_duration": 9,
+          "chain_from_previous": true,
+          "continuity_mode": "strict",
+          "keyframes": [
+            {
+              "timestamp": 3.0,
+              "description": "The monkey's forehead touches the stone ground in the first kowtow, body fully prostrated"
+            },
+            {
+              "timestamp": 6.0,
+              "description": "The monkey completes the third kowtow and remains kneeling, the master's hand begins to rise"
+            }
+          ],
+          "transition_in": {
+            "type": "cross-dissolve",
+            "duration": 0.3
+          },
+          "consistency_anchors": {
+            "characters": [
+              {
+                "id": "wukong",
+                "must_show": [
+                  "golden-brown fur",
+                  "blue robe"
+                ],
+                "expression": "deeply respectful and humble"
+              },
+              {
+                "id": "patriarch",
+                "must_show": [
+                  "white beard",
+                  "gray robes",
+                  "wooden staff"
+                ],
+                "expression": "wise and approving"
+              }
+            ],
+            "environment": [
+              "cave entrance",
+              "stone ground",
+              "morning light"
+            ]
+          },
+          "motion_control": {
+            "subject_facing": "toward_camera",
+            "camera_relation": "front_of_subject",
+            "movement_direction": "downward",
+            "screen_trajectory": "center_holding",
+            "target": "ground_before_master",
+            "distance_to_target": "holding_position",
+            "phase_beats": [
+              "standing before master",
+              "first kowtow down",
+              "rising up",
+              "final kowtow completed"
+            ]
+          },
+          "video_references": [
+            {
+              "source_type": "frame",
+              "source_id": "first_frame",
+              "usage": "first_frame"
+            },
+            {
+              "source_type": "scene",
+              "usage": "reference_composition"
+            },
+            {
+              "source_type": "character",
+              "source_id": "wukong",
+              "usage": "reference_character",
+              "subject": "wukong"
+            },
+            {
+              "source_type": "character",
+              "source_id": "patriarch",
+              "usage": "reference_character",
+              "subject": "patriarch"
+            },
+            {
+              "source_type": "stage",
+              "source_id": "1",
+              "usage": "reference_stage"
+            },
+            {
+              "source_type": "stage",
+              "source_id": "2",
+              "usage": "reference_stage"
+            },
+            {
+              "source_type": "frame",
+              "source_id": "target_state",
+              "usage": "reference_target_state"
+            }
+          ],
+          "shot_type": "visible_subject"
+        }
+      ]
+    },
+    {
+      "id": "scene_02",
+      "name": "传授神通",
+      "location": "洞内修炼室",
+      "narrative_segment": "祖师传授他长生之术、七十二般变化和筋斗云神通。悟空天资聪颖，短短数年便练成绝世神功。",
+      "summary": "菩提祖师在洞内向悟空传授七十二变口诀",
+      "visual_description": "Candlelit cave interior, master and disciple facing each other",
+      "emotion_arc": "专注聆听 → 顿悟欣喜",
+      "characters_in_scene": [
+        "wukong",
+        "patriarch"
+      ],
+      "lighting": "warm candlelight, 2700K, flickering shadows",
+      "weather": "indoor, incense smoke",
+      "environment_description": "Dimly lit cave interior with rough stone walls. Multiple candles on stone ledges cast dancing shadows. Wooden training posts in corners. Meditation cushions on floor. Ancient scrolls on stone shelves. Incense smoke curls upward.",
+      "props": [
+        "candles",
+        "meditation cushions",
+        "training posts",
+        "scrolls"
+      ],
+      "duration": 12,
+      "shots": [
+        {
+          "id": 3,
+          "characters_in_shot": [
+            "patriarch",
+            "wukong"
+          ],
+          "narrative_segment": "祖师传授他长生之术、七十二般变化和筋斗云神通。",
+          "scene_prompt": "Close-up inside candlelit cave. Master sits cross-legged on meditation cushion, facing kneeling disciple. Candlelight flickers across faces. Master gestures with one hand explaining profound secrets.",
+          "end_frame_description": "Master has finished speaking and sits in stillness. Disciple remains kneeling but eyes now shine with sudden understanding, enlightenment crossing his face.",
+          "action_prompt": "Master speaks and gestures slowly explaining mystical techniques. Disciple listens intently, expression gradually shifts from concentration to sudden realization",
+          "camera_movement": "slow dolly-in",
+          "camera_technical": "50mm, f/1.8",
+          "atmosphere_lighting": "warm candlelight, 2700K, chiaroscuro, rim lighting",
+          "physics_note": "candle flames flickering, incense smoke drifting",
+          "speed_baseline": "1.0x",
+          "narration": "",
+          "estimated_duration": 7,
+          "chain_from_previous": false,
+          "continuity_mode": "scene_end",
+          "transition_in": {
+            "type": "cross-dissolve",
+            "duration": 0.5
+          },
+          "consistency_anchors": {
+            "characters": [
+              {
+                "id": "patriarch",
+                "must_show": [
+                  "white beard",
+                  "gray robes"
+                ],
+                "expression": "teaching wisdom"
+              },
+              {
+                "id": "wukong",
+                "must_show": [
+                  "golden-brown fur",
+                  "blue robe"
+                ],
+                "expression": "focus to enlightenment"
+              }
+            ],
+            "environment": [
+              "candlelight",
+              "stone walls",
+              "incense smoke"
+            ]
+          },
+          "video_references": [
+            {
+              "source_type": "frame",
+              "source_id": "first_frame",
+              "usage": "first_frame"
+            },
+            {
+              "source_type": "scene",
+              "usage": "reference_composition"
+            },
+            {
+              "source_type": "character",
+              "source_id": "patriarch",
+              "usage": "reference_character",
+              "subject": "patriarch"
+            },
+            {
+              "source_type": "character",
+              "source_id": "wukong",
+              "usage": "reference_character",
+              "subject": "wukong"
+            }
+          ],
+          "shot_type": "visible_subject"
+        },
+        {
+          "id": 4,
+          "characters_in_shot": [
+            "wukong"
+          ],
+          "narrative_segment": "悟空天资聪颖，短短数年便练成绝世神功。",
+          "scene_prompt": "Medium shot in cave training area. Monkey stands in martial arts stance among wooden training posts. Candlelight creates dramatic shadows. Posture shows newfound confidence.",
+          "end_frame_description": "Monkey has completed swift martial movement, frozen in powerful stance with one arm extended. Expression shows joy and pride. Candle flames flicker in background.",
+          "action_prompt": "Executes rapid martial arts movements - spinning, striking posts, leaping - demonstrating newly learned skills with fluid grace",
+          "camera_movement": "orbital tracking",
+          "camera_technical": "35mm, f/2.8",
+          "atmosphere_lighting": "dramatic side candlelight, 2700K, strong shadows",
+          "physics_note": "robe flowing with movements, posts shaking from strikes",
+          "speed_baseline": "1.2x",
+          "narration": "",
+          "estimated_duration": 5,
+          "chain_from_previous": true,
+          "continuity_mode": "scene_end",
+          "transition_in": {
+            "type": "straight-cut",
+            "duration": 0
+          },
+          "consistency_anchors": {
+            "characters": [
+              {
+                "id": "wukong",
+                "must_show": [
+                  "golden-brown fur",
+                  "blue robe"
+                ],
+                "expression": "confident joyful"
+              }
+            ],
+            "environment": [
+              "training posts",
+              "candlelight",
+              "cave walls"
+            ]
+          },
+          "motion_control": {
+            "subject_facing": "toward_camera",
+            "camera_relation": "front_side",
+            "movement_direction": "lateral_and_spinning",
+            "screen_trajectory": "center_with_bursts",
+            "target": "training_posts",
+            "distance_to_target": "holding_position",
+            "phase_beats": [
+              "martial stance",
+              "spinning strike",
+              "leaping kick",
+              "landing in power pose"
+            ]
+          },
+          "video_references": [
+            {
+              "source_type": "frame",
+              "source_id": "first_frame",
+              "usage": "first_frame"
+            },
+            {
+              "source_type": "scene",
+              "usage": "reference_composition"
+            },
+            {
+              "source_type": "character",
+              "source_id": "wukong",
+              "usage": "reference_character",
+              "subject": "wukong"
+            },
+            {
+              "source_type": "frame",
+              "source_id": "target_state",
+              "usage": "reference_target_state"
+            }
+          ],
+          "shot_type": "visible_subject"
+        }
+      ]
+    },
+    {
+      "id": "scene_03",
+      "name": "初试筋斗云",
+      "location": "斜月三星洞外",
+      "narrative_segment": "一个筋斗便可翻越十万八千里。",
+      "summary": "悟空在山崖边施展筋斗云，一跃冲天",
+      "visual_description": "Mountain cliff edge at sunrise, vast sky, clouds below",
+      "emotion_arc": "紧张尝试 → 成功喜悦",
+      "characters_in_scene": [
+        "wukong"
+      ],
+      "lighting": "bright sunrise, 6500K, golden hour backlight",
+      "weather": "clear sky, morning clouds below cliff",
+      "environment_description": "Steep mountain cliff edge overlooking vast sea of clouds. Sunrise paints sky in gold and pink. Distant peaks visible. Endless sky opens above. Wind moves through sparse grass on cliff.",
+      "props": [
+        "cliff edge",
+        "clouds",
+        "mountain peaks"
+      ],
+      "duration": 13,
+      "shots": [
+        {
+          "id": 5,
+          "characters_in_shot": [
+            "wukong"
+          ],
+          "narrative_segment": "一个筋斗便可翻越十万八千里。",
+          "scene_prompt": "Wide shot at cliff edge. Monkey stands at precipice edge, toes at the brink. Sea of clouds stretches below. Sunrise behind him creates silhouette. He takes deep breath, gathering courage.",
+          "end_frame_description": "Monkey crouches low in preparation stance, arms pulled back, body coiled like spring ready to launch. Expression shows determination mixed with excitement.",
+          "action_prompt": "Steps cautiously to cliff edge, looks down at clouds below, takes deep breath, then crouches into launching stance",
+          "camera_movement": "crane up",
+          "camera_technical": "24mm, f/4.0",
+          "atmosphere_lighting": "sunrise backlight, 6500K, rim lighting on silhouette",
+          "physics_note": "robe fluttering in wind, hair moving",
+          "speed_baseline": "1.0x",
+          "narration": "",
+          "estimated_duration": 5,
+          "chain_from_previous": false,
+          "continuity_mode": "strict",
+          "keyframes": [
+            {
+              "timestamp": 2.5,
+              "description": "Monkey peers over cliff edge, looking down at the vast cloud sea below, wind catching his robe"
+            }
+          ],
+          "transition_in": {
+            "type": "cross-dissolve",
+            "duration": 0.5
+          },
+          "consistency_anchors": {
+            "characters": [
+              {
+                "id": "wukong",
+                "must_show": [
+                  "golden-brown fur",
+                  "blue robe"
+                ],
+                "expression": "nervous determination"
+              }
+            ],
+            "environment": [
+              "cliff edge",
+              "cloud sea below",
+              "sunrise sky"
+            ]
+          },
+          "motion_control": {
+            "subject_facing": "away_from_camera",
+            "camera_relation": "rear_view",
+            "movement_direction": "forward_to_edge_then_crouch",
+            "screen_trajectory": "center_to_lower_center",
+            "target": "cliff_edge",
+            "distance_to_target": "getting_closer",
+            "phase_beats": [
+              "standing back from edge",
+              "stepping to precipice",
+              "looking down",
+              "crouching into launch stance"
+            ]
+          },
+          "video_references": [
+            {
+              "source_type": "frame",
+              "source_id": "first_frame",
+              "usage": "first_frame"
+            },
+            {
+              "source_type": "scene",
+              "usage": "reference_composition"
+            },
+            {
+              "source_type": "character",
+              "source_id": "wukong",
+              "usage": "reference_character",
+              "subject": "wukong"
+            },
+            {
+              "source_type": "stage",
+              "source_id": "1",
+              "usage": "reference_stage"
+            },
+            {
+              "source_type": "frame",
+              "source_id": "target_state",
+              "usage": "reference_target_state"
+            }
+          ],
+          "shot_type": "visible_subject"
+        },
+        {
+          "id": 6,
+          "characters_in_shot": [
+            "wukong"
+          ],
+          "narrative_segment": "一个筋斗便可翻越十万八千里。",
+          "scene_prompt": "Dynamic shot. Monkey explodes upward from cliff in powerful leap. Body arcs through air. Golden cloud materializes beneath feet. Sky opens wide above.",
+          "end_frame_description": "Monkey soars high above mountain peaks, riding golden cloud. Arms spread wide in triumph. Expression pure joy. Vast sky and cloud sea surround him. Sunrise illuminates his victorious form.",
+          "action_prompt": "Launches powerfully upward, golden cloud forms under feet, rises rapidly into sky, spreads arms in exhilaration",
+          "camera_movement": "rapid crane up following action",
+          "camera_technical": "24mm, f/5.6",
+          "atmosphere_lighting": "bright sunrise, 6500K, golden light flooding scene",
+          "physics_note": "robe billowing dramatically, golden cloud particles swirling",
+          "speed_baseline": "1.5x",
+          "narration": "",
+          "estimated_duration": 8,
+          "chain_from_previous": true,
+          "continuity_mode": "scene_end",
+          "transition_in": {
+            "type": "straight-cut",
+            "duration": 0
+          },
+          "consistency_anchors": {
+            "characters": [
+              {
+                "id": "wukong",
+                "must_show": [
+                  "golden-brown fur",
+                  "blue robe"
+                ],
+                "expression": "triumphant joy"
+              }
+            ],
+            "environment": [
+              "golden cloud",
+              "vast sky",
+              "mountain peaks below",
+              "sunrise"
+            ]
+          },
+          "motion_control": {
+            "subject_facing": "away_from_camera",
+            "camera_relation": "below_subject_looking_up",
+            "movement_direction": "upward",
+            "screen_trajectory": "lower_center_to_upper_center",
+            "target": "sky",
+            "distance_to_target": "getting_closer",
+            "phase_beats": [
+              "explosive launch from cliff",
+              "golden cloud forming",
+              "rising above peaks",
+              "arms spread in triumph"
+            ]
+          },
+          "video_references": [
+            {
+              "source_type": "frame",
+              "source_id": "first_frame",
+              "usage": "first_frame"
+            },
+            {
+              "source_type": "scene",
+              "usage": "reference_composition"
+            },
+            {
+              "source_type": "character",
+              "source_id": "wukong",
+              "usage": "reference_character",
+              "subject": "wukong"
+            },
+            {
+              "source_type": "frame",
+              "source_id": "target_state",
+              "usage": "reference_target_state"
+            }
+          ],
+          "shot_type": "visible_subject"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,74 @@
+{
+  "title": "石猴学艺",
+  "synopsis": "美猴王孙悟空拜师菩提祖师，在斜月三星洞苦练七十二变和筋斗云，终成一代神通",
+  "narrative": "花果山水帘洞中，石猴称王三百余年后，忽然醒悟生死无常，决心远渡重洋寻仙访道。历经艰辛，终于在灵台方寸山斜月三星洞拜得菩提祖师为师。祖师见他根骨奇特，赐法名孙悟空。悟空勤学苦练，白天随众师兄习文练武,夜晚独自参悟玄机。一日，祖师在课堂上敲击悟空头部三下，暗示他三更时分后堂相见。悟空心领神会，三更时分悄然来到祖师寝室。祖师传授他长生之术、七十二般变化和筋斗云神通。悟空天资聪颖，短短数年便练成绝世神功，一个筋斗便可翻越十万八千里。",
+  "visual_style_anchor": "Chinese ink painting style, mystical mountain atmosphere, soft morning mist, warm candlelight in cave interiors, dynamic martial arts movements with flowing robes, ancient temple architecture",
+  "total_duration": 40,
+  "story_time": "dawn",
+  "suggested_characters": [
+    {
+      "id": "wukong",
+      "name": "孙悟空",
+      "role_type": "protagonist",
+      "personality": "机灵聪慧、勤奋好学、天资过人",
+      "appearance": "A young monkey with golden-brown fur, bright intelligent eyes, wearing a simple blue cloth robe tied with hemp rope, bare feet, alert posture",
+      "default_clothing": "Simple blue cloth training robe, hemp rope belt",
+      "key_features": ["golden-brown monkey face", "bright expressive eyes", "agile posture"],
+      "ref_description": "Young Sun Wukong in training attire, golden-brown monkey features, intelligent eyes, blue cloth robe, standing in martial arts ready stance"
+    },
+    {
+      "id": "patriarch",
+      "name": "菩提祖师",
+      "role_type": "supporting",
+      "personality": "仙风道骨、智慧深邃、严师慈父",
+      "appearance": "An elderly Taoist master with long white beard flowing to chest, serene wise eyes, wearing traditional gray Taoist robes with cloud patterns, wooden staff in hand, dignified bearing",
+      "default_clothing": "Gray Taoist robes with embroidered cloud patterns, wooden prayer beads",
+      "key_features": ["long white beard", "wise penetrating gaze", "wooden staff"],
+      "ref_description": "Patriarch Bodhi, elderly Taoist master, long white beard, gray robes with cloud patterns, holding wooden staff, serene expression"
+    }
+  ],
+  "suggested_locations": [
+    {
+      "name": "斜月三星洞外",
+      "description": "Ancient cave temple entrance carved into misty mountain cliff, stone steps leading upward, pine trees clinging to rocks, morning mist swirling, distant mountain peaks visible through clouds",
+      "environment_type": "outdoor"
+    },
+    {
+      "name": "洞内修炼室",
+      "description": "Dimly lit cave interior with stone walls, flickering candles casting dancing shadows, wooden training posts, meditation cushions, scrolls on stone shelves, incense smoke curling upward",
+      "environment_type": "indoor"
+    }
+  ],
+  "scenes": [
+    {
+      "name": "拜师学艺",
+      "location": "斜月三星洞外",
+      "narrative_segment": "花果山水帘洞中，石猴称王三百余年后，忽然醒悟生死无常，决心远渡重洋寻仙访道。历经艰辛，终于在灵台方寸山斜月三星洞拜得菩提祖师为师。",
+      "summary": "孙悟空在山洞外向菩提祖师行拜师大礼",
+      "visual_description": "Misty mountain temple entrance at dawn, stone steps leading to cave, ancient pine trees",
+      "emotion_arc": "虔诚恭敬 → 激动期待",
+      "characters_in_scene": ["wukong", "patriarch"],
+      "duration": 15
+    },
+    {
+      "name": "传授神通",
+      "location": "洞内修炼室",
+      "narrative_segment": "祖师传授他长生之术、七十二般变化和筋斗云神通。悟空天资聪颖，短短数年便练成绝世神功。",
+      "summary": "菩提祖师在洞内向悟空传授七十二变口诀",
+      "visual_description": "Candlelit cave interior, master and disciple facing each other, mystical atmosphere",
+      "emotion_arc": "专注聆听 → 顿悟欣喜",
+      "characters_in_scene": ["wukong", "patriarch"],
+      "duration": 12
+    },
+    {
+      "name": "初试筋斗云",
+      "location": "斜月三星洞外",
+      "narrative_segment": "一个筋斗便可翻越十万八千里。",
+      "summary": "悟空在山崖边施展筋斗云，一跃冲天",
+      "visual_description": "Mountain cliff edge at sunrise, vast sky opening before him, clouds below",
+      "emotion_arc": "紧张尝试 → 成功喜悦",
+      "characters_in_scene": ["wukong"],
+      "duration": 13
+    }
+  ]
+}

@@ -1,0 +1,67 @@
+    ,
+    {
+      "id": "scene_02",
+      "name": "传授神通",
+      "location": "洞内修炼室",
+      "narrative_segment": "祖师传授他长生之术、七十二般变化和筋斗云神通。悟空天资聪颖，短短数年便练成绝世神功。",
+      "summary": "菩提祖师在洞内向悟空传授七十二变口诀",
+      "visual_description": "Candlelit cave interior, master and disciple facing each other",
+      "emotion_arc": "专注聆听 → 顿悟欣喜",
+      "characters_in_scene": ["wukong", "patriarch"],
+      "lighting": "warm candlelight, 2700K, flickering shadows",
+      "weather": "indoor, incense smoke",
+      "environment_description": "Dimly lit cave interior with rough stone walls. Multiple candles on stone ledges cast dancing shadows. Wooden training posts in corners. Meditation cushions on floor. Ancient scrolls on stone shelves. Incense smoke curls upward.",
+      "props": ["candles", "meditation cushions", "training posts", "scrolls"],
+      "duration": 12,
+      "shots": [
+        {
+          "id": 3,
+          "characters_in_shot": ["patriarch", "wukong"],
+          "narrative_segment": "祖师传授他长生之术、七十二般变化和筋斗云神通。",
+          "scene_prompt": "Close-up inside candlelit cave. The master sits cross-legged on meditation cushion, facing kneeling disciple. Candlelight flickers across faces. Master gestures with one hand explaining profound secrets.",
+          "end_frame_description": "Master has finished speaking and sits in stillness. Disciple remains kneeling but eyes now shine with sudden understanding, enlightenment crossing his face.",
+          "action_prompt": "Master speaks and gestures slowly explaining mystical techniques. Disciple listens intently, expression gradually shifts from concentration to sudden realization",
+          "camera_movement": "slow dolly-in",
+          "camera_technical": "50mm, f/1.8",
+          "atmosphere_lighting": "warm candlelight, 2700K, chiaroscuro, rim lighting",
+          "physics_note": "candle flames flickering, incense smoke drifting",
+          "speed_baseline": "1.0x",
+          "narration": "",
+          "estimated_duration": 7,
+          "chain_from_previous": false,
+          "continuity_mode": "scene_end",
+          "transition_in": {"type": "cross-dissolve", "duration": 0.5},
+          "consistency_anchors": {
+            "characters": [
+              {"id": "patriarch", "must_show": ["white beard", "gray robes"], "expression": "teaching wisdom"},
+              {"id": "wukong", "must_show": ["golden-brown fur", "blue robe"], "expression": "focus to enlightenment"}
+            ],
+            "environment": ["candlelight", "stone walls", "incense smoke"]
+          }
+        },
+        {
+          "id": 4,
+          "characters_in_shot": ["wukong"],
+          "narrative_segment": "悟空天资聪颖，短短数年便练成绝世神功。",
+          "scene_prompt": "Medium shot in cave training area. Monkey stands in martial arts stance among wooden training posts. Candlelight creates dramatic shadows. Posture shows newfound confidence.",
+          "end_frame_description": "Monkey has completed swift martial movement, frozen in powerful stance with one arm extended. Expression shows joy and pride. Candle flames flicker in background.",
+          "action_prompt": "Executes rapid martial arts movements - spinning, striking posts, leaping - demonstrating newly learned skills with fluid grace",
+          "camera_movement": "orbital tracking",
+          "camera_technical": "35mm, f/2.8",
+          "atmosphere_lighting": "dramatic side candlelight, 2700K, strong shadows",
+          "physics_note": "robe flowing with movements, posts shaking from strikes",
+          "speed_baseline": "1.2x",
+          "narration": "",
+          "estimated_duration": 5,
+          "chain_from_previous": true,
+          "continuity_mode": "scene_end",
+          "transition_in": {"type": "straight-cut", "duration": 0},
+          "consistency_anchors": {
+            "characters": [
+              {"id": "wukong", "must_show": ["golden-brown fur", "blue robe"], "expression": "confident joyful"}
+            ],
+            "environment": ["training posts", "candlelight", "cave walls"]
+          }
+        }
+      ]
+    }
