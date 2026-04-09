@@ -20,26 +20,26 @@
 /opt/homebrew/bin/python3.14 scripts/ad_assets.py \
   --mode assets \
   --storyboard /path/to/storyboard.json \
-  --output_dir /tmp/ad-generator-sample/assets \
+  --output_dir /tmp/xyz-video-skill-sample/assets \
   --no_api
 ```
 
 说明：
 
 - `--no_api` 会走离线兜底路径，便于本地调试
-- 输出文件为 `/tmp/ad-generator-sample/assets/assets.json`
+- 输出文件为 `/tmp/xyz-video-skill-sample/assets/assets.json`
 
 ### 3. 可选品牌化
 
 ```bash
 /opt/homebrew/bin/python3.14 scripts/ad_brand.py \
-  --assets_manifest /tmp/ad-generator-sample/assets/assets.json \
+  --assets_manifest /tmp/xyz-video-skill-sample/assets/assets.json \
   --storyboard_file /path/to/storyboard.json \
   --brand_color '#FF6A00' \
-  --output_dir /tmp/ad-generator-sample/brand
+  --output_dir /tmp/xyz-video-skill-sample/brand
 ```
 
-输出文件为 `/tmp/ad-generator-sample/brand/brand_manifest.json`。
+输出文件为 `/tmp/xyz-video-skill-sample/brand/brand_manifest.json`。
 
 ### 4. 合成视频
 
@@ -48,9 +48,9 @@
 ```bash
 /opt/homebrew/bin/python3.14 scripts/ad_compose.py \
   --storyboard /path/to/storyboard.json \
-  --assets /tmp/ad-generator-sample/assets/assets.json \
+  --assets /tmp/xyz-video-skill-sample/assets/assets.json \
   --platform douyin wechat youtube \
-  --output_dir /tmp/ad-generator-sample/videos
+  --output_dir /tmp/xyz-video-skill-sample/videos
 ```
 
 如果使用品牌化后的图片：
@@ -58,9 +58,9 @@
 ```bash
 /opt/homebrew/bin/python3.14 scripts/ad_compose.py \
   --storyboard /path/to/storyboard.json \
-  --assets /tmp/ad-generator-sample/brand/brand_manifest.json \
+  --assets /tmp/xyz-video-skill-sample/brand/brand_manifest.json \
   --platform douyin wechat youtube \
-  --output_dir /tmp/ad-generator-sample/videos
+  --output_dir /tmp/xyz-video-skill-sample/videos
 ```
 
 ## 目录内文件的含义

@@ -1,0 +1,5 @@
+aiohttp
+Pillow
+PyYAML
+edge-tts
+opencv-python-headless

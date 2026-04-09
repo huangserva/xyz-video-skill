@@ -1,0 +1,676 @@
+{
+  "title": "医仙雨中重逢",
+  "total_duration": 31,
+  "character_ref_dir": "/Users/huangzongning/video-output/medical_reunion/character_refs",
+  "bgm_style": "冷雨压抑开场，后段转入克制而微暖的情绪弦乐",
+  "narrative": "连绵冷雨压住喀斯特群山，潮湿的青石古道几乎没有人声。深蓝汉服女孩独自蹲伏在路边，在刺骨寒意里强撑着继续采药，指尖冻得发白，却仍紧紧捏着那株带泥草药不肯松手。忽然，一片带着伞骨纹理的暖黄色阴影压到她的手上，冷雨被突兀截断，滴水的油纸伞边缘斜斜切入她的视野。她急促回头，看见身后不远处，一个重伤脱力的剑客正瘫靠在湿滑崖壁上，用筋疲力尽的右手歪斜举着伞柄，为她挡住了雨。那一瞬间，她绷紧许久的防线终于松动，眼里的警惕褪去，只剩潮湿而失措的微怔。最终，她慢慢站起，完全走入伞下，隔绝漫天冷雨，也把自己交给了这片来得太迟却足够坚定的庇护。",
+  "style_anchor": "写意写实融合的古风电影感画面，整体保持统一的东方叙事影像气质。前半段以冷灰蓝雨幕、潮湿石道、低饱和山体和压抑空气构成清冷现实基底；后半段在不跳脱媒介质感的前提下，引入克制而真实的微暖伞下光色。人物不走现代写真风，也不走夸张动漫风，保持稳定的人物造型、布料湿重感、细腻情绪表演和具备物理依据的镜头调度。",
+  "characters": {
+    "medical_girl": {
+      "ref_image": "ref_medical_girl.png",
+      "ref_path": "/Users/huangzongning/video-output/medical_reunion/character_refs/ref_medical_girl.png",
+      "ref_description": "A young ancient Chinese healer girl in dark blue hanfu, slender and resilient, carrying a restrained but stubborn emotional presence.",
+      "appearance": "十七八岁的清瘦少女，肤色偏冷白，五官干净克制，眉眼有长期独自求生留下的警觉感。长发简单束起，发尾被雨水打湿后贴在颈侧与肩头。深蓝色旧制汉服被冷雨浸透后显得沉重，袖口与下摆沾着泥水和草叶，整体气质安静、执拗、内向收束。",
+      "key_features": [
+        "深蓝汉服",
+        "清瘦而内收的身形",
+        "冻得发白的手指",
+        "带泥草药"
+      ]
+    },
+    "swordsman": {
+      "ref_image": "ref_swordsman.png",
+      "ref_path": "/Users/huangzongning/video-output/medical_reunion/character_refs/ref_swordsman.png",
+      "ref_description": "A wounded ancient Chinese swordsman, exhausted but still protective, leaning against a cliff wall while holding an oil-paper umbrella.",
+      "appearance": "二十多岁的青年剑客，面色苍白，眉骨与下颌线利落，因失血与脱力而显得疲惫。黑色湿发散乱垂落，衣袍被雨水与泥痕浸透，右臂勉强发力，身体倚靠湿滑崖壁维持平衡。整体状态是重伤、虚弱，但仍保留克制坚定的保护意志。",
+      "key_features": [
+        "重伤脱力状态",
+        "歪斜举伞的右手",
+        "倚靠崖壁",
+        "湿透的深色衣袍"
+      ]
+    }
+  },
+  "scenes": [
+    {
+      "id": "scene_01",
+      "name": "雨中重逢",
+      "location": "喀斯特山道崖壁旁",
+      "narrative_segment": "连绵冷雨压住喀斯特群山，潮湿的青石古道几乎没有人声。深蓝汉服女孩独自蹲伏在路边，在刺骨寒意里强撑着继续采药，指尖冻得发白，却仍紧紧捏着那株带泥草药不肯松手。忽然，一片带着伞骨纹理的暖黄色阴影压到她的手上，冷雨被突兀截断，滴水的油纸伞边缘斜斜切入她的视野。她急促回头，看见身后不远处，一个重伤脱力的剑客正瘫靠在湿滑崖壁上，用筋疲力尽的右手歪斜举着伞柄，为她挡住了雨。那一瞬间，她绷紧许久的防线终于松动，眼里的警惕褪去，只剩潮湿而失措的微怔。最终，她慢慢站起，完全走入伞下，隔绝漫天冷雨，也把自己交给了这片来得太迟却足够坚定的庇护。",
+      "summary": "冷雨绝境中，女孩在意外庇护下与重伤剑客重逢。",
+      "visual_description": "冷雨压顶的山道与崖壁构成压抑而封闭的视觉空间，前段以冷灰蓝环境和潮湿材质强化绝境感，后段以油纸伞带来的局部暖色切入，形成冷暖冲撞后的情绪松动。",
+      "emotion_arc": "压抑独撑 -> 外部变量闯入 -> 错愕与识别 -> 卸力与心安",
+      "characters_in_scene": [
+        "medical_girl",
+        "swordsman"
+      ],
+      "lighting": "整体为阴天冷雨下的漫射冷光，山道与崖壁反射出低饱和湿冷灰蓝；油纸伞进入后，只在局部形成克制而真实的暖黄色遮雨光影。",
+      "weather": "连绵冷雨持续落下，空气潮湿发冷，山间薄雾压低，地面与崖壁都带有明显湿润反光与积水痕迹。",
+      "environment_description": "喀斯特群山在冷雨和雾气中层层后退，山道由潮湿发暗的青石板铺成，边缘夹杂零散野草与泥水。右侧是湿滑粗糙的崖壁，雨水顺着岩面往下淌，局部形成细小水痕和反光。空间狭长、闭塞、寒意逼人，几乎听不到人声，只有雨声与偶发水滴敲击石面的回响。",
+      "scene_continuity": {
+        "stable_facts": {
+          "spatial_layout": [
+            "女孩始终位于山道靠外侧，剑客始终位于画面右侧崖壁附近。",
+            {
+              "text": "在女孩进入伞下之前，剑客始终处于女孩身后偏右的位置。",
+              "applies_from_shot": 3
+            }
+          ],
+          "prop_states": [
+            {
+              "text": "油纸伞始终由剑客右手举着，伞面持续覆盖女孩上方或即将进入的伞下区域。",
+              "applies_from_shot": 3
+            },
+            "草药始终与女孩保持连续关系，处于她手中、手边或脚边，不突然消失。"
+          ],
+          "environment_states": [
+            "湿滑崖壁始终位于画面右侧，青石古道向远处延伸的方向保持不变。",
+            {
+              "text": "冷雨持续落下，伞下局部暖色只作为局部遮蔽，不改变整体冷雨环境。",
+              "applies_from_shot": 3
+            }
+          ],
+          "character_states": [
+            {
+              "text": "剑客始终处于重伤脱力状态，不恢复为强势直立姿态。",
+              "applies_from_shot": 4
+            },
+            "女孩从蹲伏采药逐步过渡到回头、起身、进入伞下，不跳步回退。"
+          ]
+        },
+        "entity_registry": {
+          "oil_paper_umbrella": {
+            "count": 1,
+            "holder": "swordsman.right_hand",
+            "persistent_state": "滴水、暖黄色、微微歪斜、从画外逐步揭示为同一把伞",
+            "applies_from_shot": 3
+          },
+          "medical_herbs": {
+            "count": 1,
+            "holder": "medical_girl.hand_or_ground_nearby",
+            "persistent_state": "带泥、潮湿、与女孩保持连续关系"
+          }
+        },
+        "carry_forward_subjects": [
+          "medical_girl",
+          "swordsman",
+          "滴水油纸伞",
+          "带泥草药"
+        ]
+      },
+      "props": [
+        "带泥草药",
+        {
+          "name": "滴水油纸伞",
+          "applies_from_shot": 3
+        },
+        "湿滑崖壁",
+        "青石古道"
+      ],
+      "duration": 31,
+      "shots": [
+        {
+          "id": 1,
+          "characters_in_shot": [
+            "medical_girl"
+          ],
+          "narrative_segment": "连绵冷雨压住喀斯特群山，潮湿的青石古道几乎没有人声。深蓝汉服女孩独自蹲伏在路边，在刺骨寒意里强撑着继续采药。",
+          "scene_prompt": "全景建立镜头。连绵冷雨笼罩喀斯特群山，潮湿发暗的青石古道向远处延伸。画面左下方，深蓝汉服女孩独自蹲伏在路边，身体微微内收抵御寒冷，注意力死死压在湿冷地面的草药上，整个镜头从一开始就处于清冷、压抑、封闭的状态。",
+          "end_frame_description": "镜头缓慢推近后，环境的冷雨压迫感仍然没有变化。女孩依旧蹲伏在原地，没有发生明显位移，只是继续维持采药动作，肩背绷紧，整个人仍处在孤绝而执拗的状态中。",
+          "action_prompt": "镜头在冷雨中极缓向前推进，群山、古道与潮湿空气共同强化压抑感。女孩基本保持蹲伏姿态，仅有克制而细小的手部采药动作，身体因寒冷持续紧绷，没有出现明显的大幅动作或位置变化。",
+          "camera_movement": "缓慢向前推轨",
+          "camera_technical": "24mm，f/4.0",
+          "speed_baseline": "0.8x",
+          "narration": "",
+          "estimated_duration": 6,
+          "reference_strategy": "single_anchor",
+          "chain_from_previous": false,
+          "shot_type": "visible_subject",
+          "continuity_mode": "scene_end",
+          "subject_constraints": {
+            "required_visible_subjects": [
+              "medical_girl"
+            ],
+            "optional_visible_subjects": [],
+            "offscreen_subjects": [
+              "swordsman"
+            ],
+            "continuity_subjects": [
+              "medical_girl"
+            ],
+            "forbidden_visible_subjects": [
+              "swordsman"
+            ],
+            "semantic_rules": [
+              "镜头重点是女孩在冷雨中的孤绝处境与执拗采药状态。",
+              "不要提前引入剑客。",
+              "保持冷、湿、压抑的建立镜头气质。"
+            ]
+          },
+          "motion_control": {
+            "subject_facing": "低头侧前",
+            "camera_relation": "远距离左前方观察位",
+            "movement_direction": "静止",
+            "screen_trajectory": "主体保持在画面左下区域",
+            "target": "路边草药",
+            "distance_to_target": "holding_position",
+            "phase_beats": [
+              "冷雨群山与古道建立压迫环境",
+              "镜头极缓推近女孩",
+              "女孩维持蹲伏采药状态"
+            ]
+          },
+          "video_references": [
+            {
+              "source_type": "frame",
+              "source_id": "first_frame",
+              "usage": "first_frame"
+            },
+            {
+              "source_type": "scene",
+              "usage": "reference_composition"
+            },
+            {
+              "source_type": "character",
+              "source_id": "medical_girl",
+              "usage": "reference_character",
+              "subject": "medical_girl"
+            }
+          ],
+          "transition_in": null,
+          "consistency_anchors": {
+            "characters": [
+              {
+                "id": "medical_girl",
+                "must_show": [
+                  "深蓝汉服",
+                  "蹲伏姿态",
+                  "采药动作"
+                ],
+                "expression": "压抑而执拗"
+              }
+            ],
+            "environment": [
+              "冷雨",
+              "喀斯特群山",
+              "潮湿青石古道"
+            ]
+          }
+        },
+        {
+          "id": 2,
+          "characters_in_shot": [
+            "medical_girl"
+          ],
+          "narrative_segment": "她指尖冻得发白，却仍紧紧捏着那株带泥草药不肯松手。",
+          "scene_prompt": "近景固定镜头。环境被大幅剥离，画面焦点死死锁定在女孩冻得发白的手指和那株带着泥根的绿色草药上，背景只保留被雨水浸透的深蓝衣袖和模糊冷雨，镜头要强调她近乎偏执的专注。",
+          "end_frame_description": "镜头结束时，女孩仍旧没有松手，草药和发白的手指依然占据视觉核心。她的执拗状态没有被打断，只是紧绷感被进一步放大，为外部变量闯入前的极端专注做足准备。",
+          "action_prompt": "镜头保持稳定不动，只让雨水、指尖细小颤动和手指对草药根部的微弱收紧来累积紧张感。画面内部变化极少，重点是让专注、寒冷和执念被放大。",
+          "camera_movement": "固定镜头",
+          "camera_technical": "85mm，f/2.8",
+          "speed_baseline": "0.7x",
+          "narration": "",
+          "estimated_duration": 5,
+          "reference_strategy": "single_anchor",
+          "chain_from_previous": false,
+          "shot_type": "visible_subject",
+          "continuity_mode": "scene_end",
+          "subject_constraints": {
+            "required_visible_subjects": [
+              "medical_girl"
+            ],
+            "optional_visible_subjects": [],
+            "offscreen_subjects": [
+              "swordsman"
+            ],
+            "continuity_subjects": [
+              "medical_girl"
+            ],
+            "forbidden_visible_subjects": [
+              "swordsman"
+            ],
+            "semantic_rules": [
+              "镜头焦点必须锁在草药与手指上。",
+              "不要让剑客或伞提前入画。",
+              "突出极寒中的执拗与偏执专注。"
+            ]
+          },
+          "motion_control": {
+            "subject_facing": "手部近距离俯视",
+            "camera_relation": "静态微距观察位",
+            "movement_direction": "静止",
+            "screen_trajectory": "主体保持画面中央偏下",
+            "target": "带泥草药根部",
+            "distance_to_target": "holding_position",
+            "phase_beats": [
+              "手指与草药形成单一焦点",
+              "寒冷带来的细小颤动被看见",
+              "执拗状态持续不被打断"
+            ]
+          },
+          "video_references": [
+            {
+              "source_type": "frame",
+              "source_id": "first_frame",
+              "usage": "first_frame"
+            },
+            {
+              "source_type": "scene",
+              "usage": "reference_composition"
+            },
+            {
+              "source_type": "character",
+              "source_id": "medical_girl",
+              "usage": "reference_character",
+              "subject": "medical_girl"
+            }
+          ],
+          "transition_in": {
+            "type": "cross-dissolve",
+            "duration": 0.4
+          },
+          "consistency_anchors": {
+            "characters": [
+              {
+                "id": "medical_girl",
+                "must_show": [
+                  "冻得发白的手指",
+                  "深蓝湿袖",
+                  "带泥草药"
+                ],
+                "expression": "极度专注"
+              }
+            ],
+            "environment": [
+              "冷雨背景虚化",
+              "潮湿质感"
+            ]
+          }
+        },
+        {
+          "id": 3,
+          "characters_in_shot": [
+            "medical_girl"
+          ],
+          "narrative_segment": "忽然，一片带着伞骨纹理的暖黄色阴影压到她的手上，冷雨被突兀截断，滴水的油纸伞边缘斜斜切入她的视野。",
+          "scene_prompt": "特写镜头。画面仍然紧贴女孩手中的草药与手部区域，雨水持续打在画面边缘。此时一切仍处于冷雨直落的状态，外部变量尚未完全进入，但画面需要保留一种即将被打破的紧绷平衡。",
+          "end_frame_description": "镜头结束时，一片带着清晰伞骨纹理的暖黄色阴影已经完整落在女孩手上，冷雨在这片区域被突然截断，滴水的油纸伞边缘以斜角切入画面，形成冷暖骤然对撞的明确终点。",
+          "action_prompt": "外部变量以突然闯入的方式打破原本的静止：暖黄色遮雨阴影先压到手部，再让油纸伞边缘斜斜切入画面，原本直落的冷雨在手部上方被截断。整个变化必须短促、明确、带有物理上的突袭感。",
+          "camera_movement": "极缓微抬镜头",
+          "camera_technical": "100mm，f/3.2",
+          "speed_baseline": "0.9x",
+          "narration": "",
+          "estimated_duration": 5,
+          "reference_strategy": "anchor_with_end",
+          "chain_from_previous": false,
+          "shot_type": "transition_reveal",
+          "continuity_mode": "strict",
+          "subject_constraints": {
+            "required_visible_subjects": [
+              "medical_girl"
+            ],
+            "optional_visible_subjects": [],
+            "offscreen_subjects": [
+              "swordsman"
+            ],
+            "continuity_subjects": [
+              "medical_girl",
+              "swordsman"
+            ],
+            "forbidden_visible_subjects": [
+              "swordsman"
+            ],
+            "semantic_rules": [
+              "这一镜只揭示伞的闯入，不要直接露出剑客本体。",
+              "必须形成冷雨直射被暖色伞影截断的物理变化。",
+              "油纸伞边缘进入应当是核心外部变量。"
+            ]
+          },
+          "shot_delta": [
+            "本镜头只允许新增伞影与伞边进入手部画面。",
+            "女孩手部、草药、冷雨环境和构图中心保持连续，不切换到双人关系镜头。"
+          ],
+          "motion_control": {
+            "subject_facing": "手部特写俯视",
+            "camera_relation": "近距离观察位",
+            "movement_direction": "外部遮挡自上方斜切进入",
+            "screen_trajectory": "伞边缘从画面右上斜切入中心",
+            "target": "女孩手部与草药",
+            "distance_to_target": "getting_closer",
+            "phase_beats": [
+              "冷雨持续直落在手部周围",
+              "暖色伞影突然压到手上",
+              "油纸伞边缘斜切入画形成明确遮挡"
+            ]
+          },
+          "video_references": [
+            {
+              "source_type": "frame",
+              "source_id": "first_frame",
+              "usage": "first_frame"
+            },
+            {
+              "source_type": "scene",
+              "usage": "reference_composition"
+            },
+            {
+              "source_type": "character",
+              "source_id": "medical_girl",
+              "usage": "reference_character",
+              "subject": "medical_girl"
+            },
+            {
+              "source_type": "frame",
+              "source_id": "target_state",
+              "usage": "reference_target_state"
+            }
+          ],
+          "transition_in": {
+            "type": "straight-cut",
+            "duration": 0.0
+          },
+          "consistency_anchors": {
+            "characters": [
+              {
+                "id": "medical_girl",
+                "must_show": [
+                  "手部特写",
+                  "带泥草药",
+                  "被暖色伞影覆盖"
+                ],
+                "expression": "惊扰前的极端专注"
+              }
+            ],
+            "environment": [
+              "冷暖光影冲撞",
+              "滴水油纸伞边缘",
+              "被截断的冷雨"
+            ]
+          }
+        },
+        {
+          "id": 4,
+          "characters_in_shot": [
+            "medical_girl",
+            "swordsman"
+          ],
+          "narrative_segment": "她急促回头，看见身后不远处，一个重伤脱力的剑客正瘫靠在湿滑崖壁上，用筋疲力尽的右手歪斜举着伞柄，为她挡住了雨。那一瞬间，她绷紧许久的防线终于松动，眼里的警惕褪去，只剩潮湿而失措的微怔。",
+          "scene_prompt": "中近景反应镜头。女孩在伞影闯入后的下一瞬仍处于紧绷状态，身体带着突发惊扰后的急促反应，正要半转身回头。画面右后方尚未完整看清来者，只能先感到一个需要被确认的存在和一股来自后方的保护动作。",
+          "end_frame_description": "镜头结束时，女孩已经完成急促回眸，眼神从警惕滑向湿润的微怔。画面右后方清楚交代出重伤脱力的剑客：他瘫靠在湿滑崖壁上，右手歪斜举伞，为她挡住了雨，整幅画面进入被震动后的认出与松动状态。",
+          "action_prompt": "女孩被突如其来的遮雨动作打断后，迅速半转身回头，情绪从警惕、防御滑向错愕与微微失控。随着她的视线完成回转，画面逐步揭示出右后方的剑客：他不是站立逼近，而是虚弱地倚靠崖壁，用残存力气把伞举向她。这个镜头内部必须完成从未知闯入到身份确认的过程。",
+          "camera_movement": "快速斜向摇摄转半弧形微环绕",
+          "camera_technical": "50mm，f/2.8",
+          "speed_baseline": "1.0x",
+          "narration": "",
+          "estimated_duration": 7,
+          "reference_strategy": "anchor_keyframes_end",
+          "chain_from_previous": false,
+          "shot_type": "transition_reveal",
+          "continuity_mode": "strict",
+          "motion_control": {
+            "subject_facing": "由侧前转向身后右侧",
+            "camera_relation": "跟随女孩反应的近距离观察位",
+            "movement_direction": "半转身回眸",
+            "screen_trajectory": "视线与身体重心由左前转向右后",
+            "target": "右后方撑伞的剑客",
+            "distance_to_target": "getting_closer",
+            "phase_beats": [
+              "女孩被闯入感惊扰，身体先紧一下",
+              "急促半转身回头寻找来源",
+              "视线锁定重伤剑客并完成认出"
+            ]
+          },
+          "keyframes": [
+            {
+              "timestamp": 2.2,
+              "description": "女孩身体刚转过一半，眼神仍带警惕，画面右后方只隐约出现撑伞手势和湿滑崖壁。"
+            },
+            {
+              "timestamp": 4.6,
+              "description": "女孩视线已经锁定来者，剑客倚靠崖壁、歪斜举伞的状态被清楚看见，警惕开始松动为错愕。"
+            }
+          ],
+          "video_references": [
+            {
+              "source_type": "frame",
+              "source_id": "first_frame",
+              "usage": "first_frame"
+            },
+            {
+              "source_type": "scene",
+              "usage": "reference_composition"
+            },
+            {
+              "source_type": "character",
+              "source_id": "medical_girl",
+              "usage": "reference_character",
+              "subject": "medical_girl"
+            },
+            {
+              "source_type": "character",
+              "source_id": "swordsman",
+              "usage": "reference_character",
+              "subject": "swordsman"
+            },
+            {
+              "source_type": "stage",
+              "source_id": "1",
+              "usage": "reference_stage",
+              "stage": "partial_reveal"
+            },
+            {
+              "source_type": "stage",
+              "source_id": "2",
+              "usage": "reference_stage",
+              "stage": "identity_confirmation"
+            },
+            {
+              "source_type": "frame",
+              "source_id": "target_state",
+              "usage": "reference_target_state"
+            }
+          ],
+          "subject_constraints": {
+            "required_visible_subjects": [
+              "medical_girl",
+              "swordsman"
+            ],
+            "optional_visible_subjects": [],
+            "offscreen_subjects": [],
+            "continuity_subjects": [
+              "medical_girl",
+              "swordsman"
+            ],
+            "forbidden_visible_subjects": [],
+            "semantic_rules": [
+              "必须先完成女孩的反应，再完成剑客身份揭示。",
+              "剑客的姿态必须是重伤脱力、倚靠崖壁、勉强举伞，而不是强势站立出现。",
+              "情绪变化必须从警惕转为微怔和松动。"
+            ],
+            "pose_contract": [
+              "剑客身体重心始终落在地面与右侧崖壁交界处。",
+              "剑客上身持续斜靠崖壁，支撑点不变。",
+              "剑客下肢保持坐地承重或贴地屈起承重，不转为站立承重。",
+              "剑客右手始终向上举伞，伞面稳定延伸到女孩上方。"
+            ],
+            "gaze_contract": {
+              "medical_girl": {
+                "primary_target": "swordsman",
+                "target_zone": "身后右侧崖壁附近"
+              },
+              "swordsman": {
+                "primary_target": "medical_girl",
+                "target_zone": "女孩所在的伞下边缘区域"
+              }
+            }
+          },
+          "shot_delta": [
+            "本镜头只允许女孩完成急促回头与视线确认。",
+            "剑客从局部暗示被逐步揭示为完整人物，但姿态、持伞手、空间位置保持不变。"
+          ],
+          "transition_in": {
+            "type": "straight-cut",
+            "duration": 0.0
+          },
+          "consistency_anchors": {
+            "characters": [
+              {
+                "id": "medical_girl",
+                "must_show": [
+                  "急促回眸",
+                  "眼神松动",
+                  "半转身姿态"
+                ],
+                "expression": "警惕转为湿润微怔"
+              },
+              {
+                "id": "swordsman",
+                "must_show": [
+                  "倚靠崖壁",
+                  "歪斜举伞的右手",
+                  "重伤脱力状态"
+                ],
+                "expression": "虚弱但坚定"
+              }
+            ],
+            "environment": [
+              "湿滑崖壁",
+              "伞下局部暖色",
+              "冷雨背景"
+            ]
+          }
+        },
+        {
+          "id": 5,
+          "characters_in_shot": [
+            "medical_girl",
+            "swordsman"
+          ],
+          "narrative_segment": "最终，她慢慢站起，完全走入伞下，隔绝漫天冷雨，也把自己交给了这片来得太迟却足够坚定的庇护。",
+          "scene_prompt": "中景收束镜头。女孩在认出剑客之后，情绪已经从防备转为松动，身体开始从蹲伏或紧绷状态中释放出来。伞下空间在画面中已经形成一个可进入的庇护区，她正要慢慢起身，走向那片被隔绝出来的暖色区域。",
+          "end_frame_description": "镜头结束时，女孩已经完全站入油纸伞下，双肩彻底垮塌卸力，身体微弱后倚，彻底放弃防御。画面右侧稳稳保留剑客倚靠崖壁、勉强握伞的手臂与姿态，漫天冷雨被清晰隔绝在伞外，整幅画面落到来之不易的心安与庇护中。",
+          "action_prompt": "女孩在确认来者后，慢慢从紧绷状态中起身，动作不快，但能看出身体防线逐步卸掉。她向伞下空间靠近并真正进入那片庇护区域，冷雨被隔在外面，画面情绪从惊扰后的微怔稳定下落到彻底卸力的安定状态。",
+          "camera_movement": "极度缓慢后拉镜头",
+          "camera_technical": "40mm，f/3.5",
+          "speed_baseline": "0.75x",
+          "narration": "",
+          "estimated_duration": 8,
+          "reference_strategy": "anchor_with_end",
+          "chain_from_previous": false,
+          "shot_type": "visible_subject",
+          "continuity_mode": "strict",
+          "subject_constraints": {
+            "required_visible_subjects": [
+              "medical_girl",
+              "swordsman"
+            ],
+            "optional_visible_subjects": [],
+            "offscreen_subjects": [],
+            "continuity_subjects": [
+              "medical_girl",
+              "swordsman"
+            ],
+            "forbidden_visible_subjects": [],
+            "semantic_rules": [
+              "镜头终点必须是女孩完全进入伞下并卸下防御。",
+              "剑客仍应保持虚弱倚靠状态，不要突然恢复强势姿态。",
+              "伞外冷雨与伞下庇护的对比必须明确。"
+            ],
+            "pose_contract": [
+              "剑客身体重心始终落在地面与右侧崖壁交界处。",
+              "剑客上身持续斜靠崖壁，支撑点不变。",
+              "剑客下肢保持坐地承重或贴地屈起承重，不转为站立承重。",
+              "剑客右手始终向上举伞，伞面稳定覆盖女孩进入后的头顶区域。"
+            ],
+            "gaze_contract": {
+              "medical_girl": {
+                "primary_target": "swordsman",
+                "target_zone": "右侧伞下与崖壁之间的剑客位置"
+              },
+              "swordsman": {
+                "primary_target": "medical_girl",
+                "target_zone": "伞下站入后的女孩位置"
+              }
+            }
+          },
+          "shot_delta": [
+            "本镜头只允许女孩从原有紧绷状态慢慢起身并走入伞下。",
+            "剑客姿态、持伞手、崖壁依靠关系和伞的持有关系保持不变。"
+          ],
+          "motion_control": {
+            "subject_facing": "由前侧站起后进入右侧伞下空间",
+            "camera_relation": "中距离稳定观察位",
+            "movement_direction": "起身后向右侧庇护区靠近",
+            "screen_trajectory": "主体由画面中左向中右缓慢移动",
+            "target": "油纸伞下的庇护空间",
+            "distance_to_target": "getting_closer",
+            "phase_beats": [
+              "女孩从紧绷状态中慢慢起身",
+              "她向伞下空间靠近并进入",
+              "身体彻底卸力，情绪落到心安"
+            ]
+          },
+          "video_references": [
+            {
+              "source_type": "frame",
+              "source_id": "first_frame",
+              "usage": "first_frame"
+            },
+            {
+              "source_type": "scene",
+              "usage": "reference_composition"
+            },
+            {
+              "source_type": "character",
+              "source_id": "medical_girl",
+              "usage": "reference_character",
+              "subject": "medical_girl"
+            },
+            {
+              "source_type": "character",
+              "source_id": "swordsman",
+              "usage": "reference_character",
+              "subject": "swordsman"
+            },
+            {
+              "source_type": "frame",
+              "source_id": "target_state",
+              "usage": "reference_target_state"
+            }
+          ],
+          "transition_in": {
+            "type": "cross-dissolve",
+            "duration": 0.35
+          },
+          "consistency_anchors": {
+            "characters": [
+              {
+                "id": "medical_girl",
+                "must_show": [
+                  "完全站入伞下",
+                  "双肩卸力",
+                  "防御解除后的姿态"
+                ],
+                "expression": "彻底松动后的心安"
+              },
+              {
+                "id": "swordsman",
+                "must_show": [
+                  "倚靠崖壁",
+                  "歪斜握伞",
+                  "虚弱但坚持支撑"
+                ],
+                "expression": "疲惫而温和"
+              }
+            ],
+            "environment": [
+              "伞外冷雨",
+              "伞下微暖空间",
+              "湿滑崖壁"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

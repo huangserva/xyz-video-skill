@@ -1,0 +1,92 @@
+{
+  "title": "医仙雨中重逢",
+  "synopsis": "冷雨山道上，采药少女在绝境中与重伤剑客意外重逢，被一把迟来的油纸伞重新接住。",
+  "narrative": "连绵冷雨压住喀斯特群山，潮湿的青石古道几乎没有人声。深蓝汉服女孩独自蹲伏在路边，在刺骨寒意里强撑着继续采药，指尖冻得发白，却仍紧紧捏着那株带泥草药不肯松手。忽然，一片带着伞骨纹理的暖黄色阴影压到她的手上，冷雨被突兀截断，滴水的油纸伞边缘斜斜切入她的视野。她急促回头，看见身后不远处，一个重伤脱力的剑客正瘫靠在湿滑崖壁上，用筋疲力尽的右手歪斜举着伞柄，为她挡住了雨。那一瞬间，她绷紧许久的防线终于松动，眼里的警惕褪去，只剩潮湿而失措的微怔。最终，她慢慢站起，完全走入伞下，隔绝漫天冷雨，也把自己交给了这片来得太迟却足够坚定的庇护。",
+  "visual_style_anchor": "中国冷雨古风电影感，西南喀斯特群山，潮湿青石古道，冷灰蓝色调，压抑孤绝气氛，细腻人物情绪，统一的东方影视质感，局部微暖油纸伞光影，写意但不过度动漫化。",
+  "total_duration": 31,
+  "story_time": "day",
+  "suggested_characters": [
+    {
+      "id": "medical_girl",
+      "name": "女医者",
+      "role_type": "protagonist",
+      "personality": "隐忍执拗、清冷克制、极能吃苦",
+      "appearance": "十七八岁的清瘦少女，身形单薄却带着很强的忍耐力，肤色偏冷白，眉眼干净克制，眼神里长期保留警惕与自我封闭。长发简单束起，鬓边与发尾被冷雨打湿后贴在颈侧和肩头。她穿一身深蓝色旧制汉服，布料被雨水浸透后沉重贴身，袖口和下摆沾着泥水与草叶，双手因寒冷而骨节泛白，整个人呈现安静、压抑、向内收束的状态。",
+      "default_clothing": "深蓝色旧制汉服，布料厚重，雨水浸透后贴身下坠，袖口与下摆带有泥水与草叶痕迹。",
+      "key_features": [
+        "深蓝色湿透汉服",
+        "清瘦内收的身形",
+        "冻得发白的手指",
+        "压抑克制的神情"
+      ],
+      "ref_description": "A young ancient Chinese healer girl, slender and resilient, wearing a dark blue rain-soaked hanfu, with pale cold skin, restrained expression, wet loose strands of hair, and tense hands whitened by cold."
+    },
+    {
+      "id": "swordsman",
+      "name": "重伤剑客",
+      "role_type": "supporting",
+      "personality": "沉默克制、虚弱坚韧、带保护欲",
+      "appearance": "二十多岁的青年剑客，面色苍白，眉骨与下颌线利落，因失血和寒冷显得疲惫而虚弱。黑色湿发散乱垂落，部分贴在额角与脸侧，眼神仍保留克制坚定。深色衣袍被雨水与泥痕浸透，肩背与胸前有重伤后留下的狼狈痕迹。身体无法直立，常借湿滑崖壁勉强支撑，右臂筋力将尽，却仍坚持歪斜举起油纸伞，为他人挡雨。",
+      "default_clothing": "深色古风衣袍，布料被冷雨浸透并带有泥痕与破损痕迹，整体狼狈而克制。",
+      "key_features": [
+        "面色苍白的重伤状态",
+        "倚靠崖壁的虚弱姿态",
+        "歪斜举伞的右手",
+        "湿透的深色衣袍"
+      ],
+      "ref_description": "A wounded ancient Chinese swordsman in his twenties, pale and exhausted, wearing a dark rain-soaked robe, leaning weakly against a cliff wall while raising an oil-paper umbrella with his right hand."
+    }
+  ],
+  "suggested_locations": [
+    {
+      "name": "喀斯特山道",
+      "description": "西南喀斯特群山之间的一段狭长山道，潮湿发暗的青石板被冷雨持续打湿，路边杂草与泥水混杂，远处山体被薄雾和雨幕层层压住，空间空旷却极有压迫感。",
+      "environment_type": "outdoor"
+    },
+    {
+      "name": "湿滑崖壁旁",
+      "description": "山道一侧紧贴粗糙崖壁，岩面被雨水冲刷出深色水痕和反光，局部形成能让人勉强倚靠的狭窄避身位置。油纸伞撑开后，只能形成一小块局部庇护区，与周围冷雨形成明确对比。",
+      "environment_type": "outdoor"
+    }
+  ],
+  "scenes": [
+    {
+      "name": "冷雨采药",
+      "location": "喀斯特山道",
+      "narrative_segment": "连绵冷雨压住喀斯特群山，潮湿的青石古道几乎没有人声。深蓝汉服女孩独自蹲伏在路边，在刺骨寒意里强撑着继续采药，指尖冻得发白，却仍紧紧捏着那株带泥草药不肯松手。",
+      "summary": "女孩独自在冷雨山道中采药，处境孤绝而执拗。",
+      "visual_description": "冷灰蓝雨幕、潮湿古道与低饱和群山共同建立压抑环境，镜头先从外部绝境推进到手部草药的执念焦点。",
+      "emotion_arc": "压抑独撑 -> 执拗专注",
+      "characters_in_scene": [
+        "medical_girl"
+      ],
+      "duration": 11
+    },
+    {
+      "name": "伞影闯入",
+      "location": "湿滑崖壁旁",
+      "narrative_segment": "忽然，一片带着伞骨纹理的暖黄色阴影压到她的手上，冷雨被突兀截断，滴水的油纸伞边缘斜斜切入她的视野。她急促回头，看见身后不远处，一个重伤脱力的剑客正瘫靠在湿滑崖壁上，用筋疲力尽的右手歪斜举着伞柄，为她挡住了雨。那一瞬间，她绷紧许久的防线终于松动，眼里的警惕褪去，只剩潮湿而失措的微怔。",
+      "summary": "伞影打断冷雨，女孩回头认出重伤剑客。",
+      "visual_description": "局部暖黄伞影突然切入冷灰蓝雨幕，镜头从手部局部遮挡推进到女孩回头与剑客正式出镜，冷暖冲撞下完成认出瞬间。",
+      "emotion_arc": "平衡被打破 -> 警惕惊扰 -> 错愕认出",
+      "characters_in_scene": [
+        "medical_girl",
+        "swordsman"
+      ],
+      "duration": 12
+    },
+    {
+      "name": "伞下卸力",
+      "location": "湿滑崖壁旁",
+      "narrative_segment": "最终，她慢慢站起，完全走入伞下，隔绝漫天冷雨，也把自己交给了这片来得太迟却足够坚定的庇护。",
+      "summary": "女孩进入伞下，彻底卸下防御。",
+      "visual_description": "伞外冷雨与伞下微暖庇护同时存在，人物动作由起身到进入伞下，再收束到安静稳定的依靠状态。",
+      "emotion_arc": "松动 -> 靠近 -> 卸力心安",
+      "characters_in_scene": [
+        "medical_girl",
+        "swordsman"
+      ],
+      "duration": 8
+    }
+  ]
+}

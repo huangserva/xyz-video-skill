@@ -1,59 +1,59 @@
 {
   "generated_at": "20260318_210139",
-  "asset_root": "/private/tmp/ad-generator-mvp-test2/assets",
+  "asset_root": "/private/tmp/xyz-video-skill-mvp-test2/assets",
   "images": [
     {
       "shot_id": 1,
-      "path": "/private/tmp/ad-generator-mvp-test2/brand/images/shot_001_brand.png",
+      "path": "/private/tmp/xyz-video-skill-mvp-test2/brand/images/shot_001_brand.png",
       "provider": "local_placeholder",
       "prompt": "commercial ad shot 1, 灵感咖啡机, cinematic lighting, high detail, clean composition, Chinese market style",
       "branded": true
     },
     {
       "shot_id": 2,
-      "path": "/private/tmp/ad-generator-mvp-test2/brand/images/shot_002_brand.png",
+      "path": "/private/tmp/xyz-video-skill-mvp-test2/brand/images/shot_002_brand.png",
       "provider": "local_placeholder",
       "prompt": "commercial ad shot 2, 灵感咖啡机, cinematic lighting, high detail, clean composition, Chinese market style",
       "branded": true
     },
     {
       "shot_id": 3,
-      "path": "/private/tmp/ad-generator-mvp-test2/brand/images/shot_003_brand.png",
+      "path": "/private/tmp/xyz-video-skill-mvp-test2/brand/images/shot_003_brand.png",
       "provider": "local_placeholder",
       "prompt": "commercial ad shot 3, 灵感咖啡机, cinematic lighting, high detail, clean composition, Chinese market style",
       "branded": true
     },
     {
       "shot_id": 4,
-      "path": "/private/tmp/ad-generator-mvp-test2/brand/images/shot_004_brand.png",
+      "path": "/private/tmp/xyz-video-skill-mvp-test2/brand/images/shot_004_brand.png",
       "provider": "local_placeholder",
       "prompt": "commercial ad shot 4, 灵感咖啡机, cinematic lighting, high detail, clean composition, Chinese market style",
       "branded": true
     },
     {
       "shot_id": 5,
-      "path": "/private/tmp/ad-generator-mvp-test2/brand/images/shot_005_brand.png",
+      "path": "/private/tmp/xyz-video-skill-mvp-test2/brand/images/shot_005_brand.png",
       "provider": "local_placeholder",
       "prompt": "commercial ad shot 5, 灵感咖啡机, cinematic lighting, high detail, clean composition, Chinese market style",
       "branded": true
     },
     {
       "shot_id": 6,
-      "path": "/private/tmp/ad-generator-mvp-test2/brand/images/shot_006_brand.png",
+      "path": "/private/tmp/xyz-video-skill-mvp-test2/brand/images/shot_006_brand.png",
       "provider": "local_placeholder",
       "prompt": "commercial ad shot 6, 灵感咖啡机, cinematic lighting, high detail, clean composition, Chinese market style",
       "branded": true
     },
     {
       "shot_id": 7,
-      "path": "/private/tmp/ad-generator-mvp-test2/brand/images/shot_007_brand.png",
+      "path": "/private/tmp/xyz-video-skill-mvp-test2/brand/images/shot_007_brand.png",
       "provider": "local_placeholder",
       "prompt": "commercial ad shot 7, 灵感咖啡机, cinematic lighting, high detail, clean composition, Chinese market style",
       "branded": true
     },
     {
       "shot_id": 8,
-      "path": "/private/tmp/ad-generator-mvp-test2/brand/images/shot_008_brand.png",
+      "path": "/private/tmp/xyz-video-skill-mvp-test2/brand/images/shot_008_brand.png",
       "provider": "local_placeholder",
       "prompt": "commercial ad shot 8, 灵感咖啡机, cinematic lighting, high detail, clean composition, Chinese market style",
       "branded": true
@@ -62,55 +62,55 @@
   "voiceovers": [
     {
       "shot_id": 1,
-      "path": "/private/tmp/ad-generator-mvp-test2/assets/voiceovers/shot_001.wav",
+      "path": "/private/tmp/xyz-video-skill-mvp-test2/assets/voiceovers/shot_001.wav",
       "provider": "local_silence",
       "text": "这是第1个镜头，聚焦 灵感咖啡机 在真实场景中的关键表现。"
     },
     {
       "shot_id": 2,
-      "path": "/private/tmp/ad-generator-mvp-test2/assets/voiceovers/shot_002.wav",
+      "path": "/private/tmp/xyz-video-skill-mvp-test2/assets/voiceovers/shot_002.wav",
       "provider": "local_silence",
       "text": "这是第2个镜头，聚焦 灵感咖啡机 在真实场景中的关键表现。"
     },
     {
       "shot_id": 3,
-      "path": "/private/tmp/ad-generator-mvp-test2/assets/voiceovers/shot_003.wav",
+      "path": "/private/tmp/xyz-video-skill-mvp-test2/assets/voiceovers/shot_003.wav",
       "provider": "local_silence",
       "text": "这是第3个镜头，聚焦 灵感咖啡机 在真实场景中的关键表现。"
     },
     {
       "shot_id": 4,
-      "path": "/private/tmp/ad-generator-mvp-test2/assets/voiceovers/shot_004.wav",
+      "path": "/private/tmp/xyz-video-skill-mvp-test2/assets/voiceovers/shot_004.wav",
       "provider": "local_silence",
       "text": "这是第4个镜头，聚焦 灵感咖啡机 在真实场景中的关键表现。"
     },
     {
       "shot_id": 5,
-      "path": "/private/tmp/ad-generator-mvp-test2/assets/voiceovers/shot_005.wav",
+      "path": "/private/tmp/xyz-video-skill-mvp-test2/assets/voiceovers/shot_005.wav",
       "provider": "local_silence",
       "text": "这是第5个镜头，聚焦 灵感咖啡机 在真实场景中的关键表现。"
     },
     {
       "shot_id": 6,
-      "path": "/private/tmp/ad-generator-mvp-test2/assets/voiceovers/shot_006.wav",
+      "path": "/private/tmp/xyz-video-skill-mvp-test2/assets/voiceovers/shot_006.wav",
       "provider": "local_silence",
       "text": "这是第6个镜头，聚焦 灵感咖啡机 在真实场景中的关键表现。"
     },
     {
       "shot_id": 7,
-      "path": "/private/tmp/ad-generator-mvp-test2/assets/voiceovers/shot_007.wav",
+      "path": "/private/tmp/xyz-video-skill-mvp-test2/assets/voiceovers/shot_007.wav",
       "provider": "local_silence",
       "text": "这是第7个镜头，聚焦 灵感咖啡机 在真实场景中的关键表现。"
     },
     {
       "shot_id": 8,
-      "path": "/private/tmp/ad-generator-mvp-test2/assets/voiceovers/shot_008.wav",
+      "path": "/private/tmp/xyz-video-skill-mvp-test2/assets/voiceovers/shot_008.wav",
       "provider": "local_silence",
       "text": "现在就试试 灵感咖啡机，把改变从今天开始。"
     }
   ],
   "bgm": {
-    "path": "/private/tmp/ad-generator-mvp-test2/assets/bgm/bgm.wav",
+    "path": "/private/tmp/xyz-video-skill-mvp-test2/assets/bgm/bgm.wav",
     "provider": "local_silence",
     "style": "温暖钢琴 + 轻弦乐，逐步推进",
     "duration": 30
@@ -120,7 +120,7 @@
     "brand_color": "#FF6A00",
     "logo": null,
     "watermark_text": "Brand Protected",
-    "intro_frame": "/private/tmp/ad-generator-mvp-test2/brand/intro.png",
-    "outro_frame": "/private/tmp/ad-generator-mvp-test2/brand/outro.png"
+    "intro_frame": "/private/tmp/xyz-video-skill-mvp-test2/brand/intro.png",
+    "outro_frame": "/private/tmp/xyz-video-skill-mvp-test2/brand/outro.png"
   }
 }
