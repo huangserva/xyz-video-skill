@@ -15,6 +15,10 @@ fal:
   api_key: YOUR_FAL_KEY_HERE
   api_base: https://queue.fal.run
   api_type: fal
+evolink:
+  api_key: YOUR_EVOLINK_KEY_HERE
+  api_base: https://api.evolink.ai
+  api_type: evolink
 byteplus:
   api_key: YOUR_BYTEPLUS_KEY_HERE
   api_base: https://ark.ap-southeast.bytepluses.com/api/v3
@@ -107,4 +111,3 @@ video_models:
     default_resolution: "720p"
     supports_audio: true
     supports_last_frame: true
-

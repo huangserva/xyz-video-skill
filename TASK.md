@@ -1,4 +1,4 @@
-# Ad Generator - 当前仓库说明
+# XYZ Video Skill - 当前仓库说明
 
 ## 当前定位
 
@@ -8,12 +8,12 @@
 - Python 脚本负责角色参考图、镜头素材、品牌化处理和 FFmpeg 合成
 - 现有代码已经覆盖执行层 MVP，但“创意策划 → 分镜脚本 → 投放文案”仍主要靠 `SKILL.md` 约束宿主 LLM 产出 JSON
 
-如果把当前仓库理解成“视频生成线 / 广告视频执行管线”，会比“广告片一键生成器”更准确。
+如果把当前仓库理解成“视频生成 skill / 视频执行管线”，会比“广告片一键生成器”更准确。
 
 ## 实际文件结构
 
 ```text
-skills/ad-generator/
+skills/xyz-video-skill/
 ├── SKILL.md                     # 主入口说明，定义宿主 LLM 的工作流
 ├── TASK.md                      # 当前仓库说明（本文件）
 ├── scripts/
@@ -43,7 +43,7 @@ skills/ad-generator/
 2. `framework.json`
 3. `storyboard.json`
 
-这一步不是由当前仓库内某个 `ad_creative.py` 或 `ad_storyboard.py` 自动完成，而是由 Skill 提示词和宿主 LLM 的推理完成。
+这一步不是由当前仓库内某个 `ad_creative.py` 或 `ad_storyboard.py` 自动完成，而是由 skill 提示词和宿主 LLM 的推理完成。
 
 ### 2. 生成角色参考图
 
@@ -81,7 +81,7 @@ skills/ad-generator/
 - 向下兼容 legacy 的 flat `shots`
 - `chain_from_previous` 尾帧衔接
 - `end_frame_description` 校验
-- 视频质量检测、自动重试和裁剪
+- 视频质量三重检测（帧间突变/闪烁、局部突变 spike、人脸变形 DNN）、自动裁剪和重试
 - 图像生成 fallback provider 链
 
 ### 4. 可选品牌化处理
@@ -174,6 +174,25 @@ skills/ad-generator/
 - 自动写 `storyboard.json`
 - 自动生成 `publish.json`
 - 自动生成 Remotion `ad_config.ts`
+
+### `scripts/run_pipeline.py`
+
+当前新增的执行编排入口。
+
+它当前负责：
+
+- 校验 `story.json` / `framework.json` / `storyboard.json`
+- 串联角色参考图、素材生成、品牌化、视频合成
+- 支持用 `--from` / `--to` 截取执行阶段
+- 统一产出 `pipeline_result.json`
+- 在运行前规范化 `storyboard.character_ref_dir`
+
+它当前**不负责**：
+
+- 自动生成故事
+- 自动生成 `framework.json`
+- 自动生成 `storyboard.json`
+- 自动生成 `publish.json`
 
 ## 当前未实现或未收口的部分
 

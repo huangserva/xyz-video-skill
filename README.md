@@ -31,8 +31,30 @@
   - `scene_end`：默认行为，仅 scene 末尾生成尾帧
   - `free`：氛围空镜，不生成尾帧约束
 - **中间关键帧策略**：可选 `keyframes` 描述镜头中间状态
-  - 仅支持多参考图的视频模型会使用
-  - 其他模型会自动忽略，仍走首帧 / 尾帧模式
+  - `keyframes` 现在被视为“中间阶段参考”的兼容字段
+  - 执行层会把它映射成 `video_references[].usage = "reference_stage"`
+  - 其他模型会按用途优先级裁剪参考素材
+- **强动作镜头协议已强化**
+  - 强动作 shot 不能再写成一句剧情摘要
+  - 必须按“起势 → 爆发/碰撞 → 结果落点”组织 `action_prompt` 和 `motion_control.phase_beats`
+  - 这类 shot 默认应提高 `keyframes` 密度，避免模型退化成慢速补间
+- **当前视频 provider 主路径已切到 Ark Seedance 2.0**
+  - storyboard 仍保留 `scene_prompt` / `end_frame_description` / `keyframes` / `continuity_mode`
+  - 但执行层不再按“首尾帧+关键帧插值”组织请求，而是按用途驱动参考素材组织 Ark `content`
+  - 当前默认模型为 `doubao-seedance-2-0-fast-260128`
+- **视频参考协议已升级为用途驱动**
+  - 执行层内部不再把所有参考图都视为同一种 `reference_image`
+  - 参考素材会先归一化成 `video_references`
+  - 常用用途包括：
+    - `first_frame`
+    - `reference_character`
+    - `reference_prop`
+    - `reference_composition`
+    - `reference_style`
+    - `reference_stage`
+    - `reference_target_state`
+  - Seedance prompt 会显式写出 `@图片N 作为首帧 / 参考角色 / 参考构图 ...`
+  - 旧的 `keyframes` 字段仍兼容，但会被映射成 `reference_stage`
 - **两阶段视频质量审查**：每段视频生成后自动检测
   - **阶段1 - 粗筛检测**：
     - 帧间突变 + 闪烁检测（MSE 分析）
@@ -141,6 +163,7 @@ cp config/api_keys.yaml.example config/api_keys.yaml
 - `VOLCENGINE_API_KEY`
 - `APIMART_API_KEY`
 - `BYTEPLUS_API_KEY`
+- `EVOLINK_API_KEY`
 - `OPENROUTER_API_KEY`
 - `VIDEO_OUTPUT_ROOT`
 
@@ -372,6 +395,11 @@ python3 scripts/ad_assets.py \
 - 当前默认主路径是“规则粗筛 + 母模型视觉裁定”
 - `vision_judge.py` 和外部 API 只作为后续自动化接口，不是默认强依赖
 - `hybrid_judge` 模式下，素材阶段会在 `pending_judgment` 停住，等待母模型裁定后再继续执行
+- `metrics_only` 链路下，如果触发参考图前置审查，也会在 `pending_judgment` 停住
+- 当素材阶段停在参考图审查时，优先查看：
+  - `image_audit/shot_{id}/reference_bundle/reference_review_request.json`
+  - `image_audit/shot_{id}/reference_bundle/video_prompt.txt`
+  - 其中 `video_prompt.txt` 会直接展示最终的 `@图片N 作为首帧 / 参考角色 / 参考构图 ...` 调用
 
 ### 离线重新审计
 
@@ -405,10 +433,21 @@ python3 scripts/re_audit_videos.py \
 - `_normalized/storyboard_migration_report.json`
 - `character_refs/`
 - `assets/assets.json`
+- `assets/prompts/shot_{id}_video_prompt.txt`
 - `assets/audit/`
+- `assets/image_audit/shot_{id}/reference_bundle/video_prompt.txt`
 - `brand/brand_manifest.json`
 - `videos/*.mp4`
 - `videos/edit_decisions.json`
+
+其中：
+
+- `assets/assets.json`
+  - 现在会同时汇总 `images`、`videos`、`shot_prompts`、`shot_references`
+- `assets/prompts/shot_{id}_video_prompt.txt`
+  - 是每个 shot 的最终视频 prompt 落盘版本
+- `assets/image_audit/shot_{id}/reference_bundle/video_prompt.txt`
+  - 是参考图前置审查时随 bundle 一起导出的 prompt 副本，方便直接检查用途声明是否正确
 
 ## Edit Decisions
 

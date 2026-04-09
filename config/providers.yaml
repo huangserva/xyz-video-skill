@@ -2,6 +2,8 @@
 providers:
   byteplus:
     api_base: "https://ark.ap-southeast.bytepluses.com/api/v3"
+  evolink:
+    api_base: "https://api.evolink.ai"
   volcengine:
     api_base: "https://ark.cn-beijing.volces.com/api/v3"
   apimart:
@@ -14,11 +16,41 @@ providers:
 # 各功能模块的模型和参数配置
 models:
   video:
-    fallback_chain: [byteplus]
+    fallback_chain: [volcengine_seedance2]
     max_retries: 2
     retry_delay: 5
+    review_mode: metrics_only
+    review:
+      metrics_only:
+        metrics_profile: relaxed
+      hybrid_judge:
+        metrics_profile: strict
+        export_risk_bundle: true
+      director_review:
+        metrics_profile: strict
+        max_retries: 3
+        retry_delay: 2
+    volcengine_seedance2:
+      provider: volcengine
+      model: "doubao-seedance-2-0-fast-260128"
+      supports_multi_reference: true
+      supports_keyframes: true
+      max_reference_images: 9
+      ratio: "16:9"
+      resolution: "720p"
+      generate_audio: true
+      watermark: false
+      min_duration: 4
+      max_duration: 15
+      poll_interval: 5
+      poll_max_attempts: 120
+      submit_timeout: 30
+      poll_timeout: 15
     byteplus:
       model: "seedance-1-5-pro-251215"
+      supports_multi_reference: false
+      supports_keyframes: false
+      max_reference_images: 2
       ratio: "16:9"
       resolution: "720p"
       generate_audio: true
@@ -30,7 +62,7 @@ models:
       poll_timeout: 15
 
   image:
-    fallback_chain: [volcengine, apimart, fal]
+    fallback_chain: [apimart, fal]
     volcengine:
       model: "doubao-seedream-4-0-250828"
       size: "2K"
@@ -59,4 +91,10 @@ models:
   llm:
     provider: apimart
     model: "gemini-2.5-flash"
-    timeout: 60
+    timeout: 120
+
+  vision_judge:
+    provider: apimart
+    model: "gemini-2.5-flash"
+    enabled: false
+    max_frames_per_segment: 5

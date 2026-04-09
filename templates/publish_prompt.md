@@ -1,3 +1,6 @@
+> 历史遗留模板：这是旧广告投放链路产物，不属于当前 `xyz-video-skill` 叙事视频 pipeline。
+> 如需当前主流程，请优先使用 `step1_story_idea.md`、`step2_structure.md`、`step3_shots.md`、`storyboard_prompt.md`。
+
 你是一名广告投放优化师。请基于脚本和平台特性生成投放文案。
 
 输入：

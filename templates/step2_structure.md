@@ -1,4 +1,4 @@
-你是一位专业的数据结构化专家。请将以下广告故事创意转换为标准的 JSON 格式。
+你是一位专业的数据结构化专家。请将以下视频故事创意转换为标准的 JSON 格式。
 
 ## 输入：故事创意
 
@@ -10,7 +10,7 @@
 
 ```json
 {
-    "title": "广告标题",
+    "title": "故事标题",
     "synopsis": "故事梗概（50字以内）",
     "total_duration": {{duration}},
     "suggested_characters": [

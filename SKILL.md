@@ -14,6 +14,8 @@ description: "视频生成 skill。对话驱动的端到端视频生成流程：
 
 **视频质量检测标准：** 在检查单个 shot、分析风险片段、执行视觉裁定、以及整片复检时，必须参考 [reference/video_quality_standard.md](/Users/huangzongning/openclaw/skills/xyz-video-skill/reference/video_quality_standard.md)。不要只依据数值异常判断，必须按标准文件中的维度逐项检查。
 
+**视频生成参考图策略标准：** 在生成 storyboard 时，必须参考 [reference/video_generation_strategy.md](/Users/huangzongning/openclaw/skills/xyz-video-skill/reference/video_generation_strategy.md)。先做语义判断，再把结果优先落成 `video_references`；`shot_type`、`continuity_mode`、`keyframes`、`chain_from_previous` 仍然要写，但它们已经不是视频参考协议的主脑。
+
 **当前 skill 的关键协议已经升级：**
 
 - `storyboard.json` 现在不是旧的松散 shot 列表，而是以 `scenes > shots` 为主结构
@@ -25,29 +27,45 @@ description: "视频生成 skill。对话驱动的端到端视频生成流程：
 - legacy storyboard 会在执行时被 `run_pipeline.py` 规范化到 `_normalized/storyboard.json`
 - 规范化过程会输出 `_normalized/storyboard_migration_report.json`
 
-**当前成片流程已经不是“素材生成完直接合成”那么简单，而是：**
+**当前成片流程已经不是”素材生成完直接合成”那么简单，而是：**
 
 1. 分镜生成
-2. 角色参考图生成
-3. 图片/视频素材生成
-4. 视频质量粗筛
-5. 母模型视觉裁定
-6. pair-level 编辑决策
-7. FFmpeg 合成
+2. 导演写帧级 prompt
+3. 角色参考图生成
+4. 图片/视频素材生成
+5. 导演审图（可选）
+6. 视频质量粗筛
+7. 母模型视觉裁定
+8. pair-level 编辑决策
+9. FFmpeg 合成
 
 也就是说：
+- 思考在母模型脑子里完成，生图模型只管执行
+- 导演审图是主流程的一部分（可选）
 - 质量审查是主流程的一部分
 - 编辑决策也是主流程的一部分
-- 不能再把 compose 理解成“按每个 shot 的 transition_in 直接拼起来”
+- 不能再把 compose 理解成”按每个 shot 的 transition_in 直接拼起来”
+- 当前视频生成 provider 主路径以 Ark Seedance 2.0 为主；对你来说，storyboard 现在应优先按 `video_references` 的用途协议来约束视频，而不是把“首帧 / 尾帧 / keyframes”当成唯一主结构
 
 ```
-步骤1: 故事创作            → 你与用户对话讨论方向，输出 story.json
-步骤2: 剧本框架 + 角色设计  → 你思考，输出 framework.json（从 narrative 切分 scenes + 设计角色）
+步骤1: 故事创作              → 你与用户对话讨论方向，输出 story.json
+步骤2: 剧本框架 + 角色设计    → 你思考，输出 framework.json（从 narrative 切分 scenes + 设计角色）
 步骤3: 角色参考图生成        → python3 scripts/ad_assets.py --mode character_refs
-步骤4: 分镜脚本            → 你思考，输出 storyboard.json（scenes > shots，从 narrative 派生）
-步骤5: 素材生成 + 质量审查   → python3 scripts/ad_assets.py
-步骤6: 编辑决策 + 视频合成   → python3 scripts/ad_compose.py
+步骤4: 分镜脚本              → 你思考，输出 storyboard.json（scenes > shots，从 narrative 派生）
+步骤4.5: 导演写帧级 prompt    → 你思考，输出 director_prompts.json（逐帧画面描述）
+步骤5: 素材生成              → python3 scripts/ad_assets.py [--review-mode director_review]
+步骤5.5: 导演审图（可选）     → 你查看生成的图片，判断 keep/regenerate
+步骤6: 编辑决策 + 视频合成    → python3 scripts/ad_compose.py
 ```
+
+**审图模式选择建议：**
+- `metrics_only`（默认）- 只做自动质量检测，适合快速迭代或对生图质量有信心
+- `director_review` - 每张图片生成后暂停，由你审图。适合：
+  - 需要严格把控画面质量的商业项目
+  - 复杂的角色姿态或情感表达
+  - 对连续性要求高的场景（如角色在不同镜头间的一致性）
+  - 第一次使用新的角色设定或场景风格
+- `hybrid_judge` - 图片质量粗筛 + 视频视觉判断，介于两者之间
 
 **输出目录约定：** 所有文件输出到同一个目录，如 `~/video-output/20260319_143022/`。
 
@@ -86,7 +104,7 @@ description: "视频生成 skill。对话驱动的端到端视频生成流程：
 
 ### 1.1 narrative（完整连贯叙事）— 最核心的字段
 
-**narrative 是整个视频的故事主线。** 后续步骤2的场景拆分、步骤4的分镜脚本、步骤5的首尾帧/动作提取，都从 narrative 派生。它不是摘要，不是大纲，而是一段**可以直接朗读的、有画面感的连贯叙事**。
+**narrative 是整个视频的故事主线。** 后续步骤2的场景拆分、步骤4的分镜脚本、步骤5的帧级 prompt / 动作描述提取，都从 narrative 派生。它不是摘要，不是大纲，而是一段**可以直接朗读的、有画面感的连贯叙事**。
 
 **写作规则：**
 
@@ -157,7 +175,7 @@ description: "视频生成 skill。对话驱动的端到端视频生成流程：
             "appearance": "详细外貌描述（极其详细！颜色、材质、形状、纹理、特征标记，80-150字。这是角色参考图的生成依据，必须写到看完描述就能画出来的程度）",
             "default_clothing": "默认服装/装甲描述（颜色、款式、配饰、材质细节，50-80字）",
             "key_features": ["识别特征1", "识别特征2", "识别特征3"],
-            "ref_description": "传给图片模型的角色说明（英文，包含：这是谁、外观概要、在故事中的角色，用于让图片模型理解参考图）"
+            "ref_description": "传给图片模型的角色说明（可用英文，供图片模型理解角色参考图）"
         }
     ],
     "suggested_locations": [
@@ -212,7 +230,33 @@ narrative 的自然切分点：
 - **颜色方案**：主色+辅色+点缀色的精确描述
 - **材质纹理**：光滑/粗糙/磨损/反光等质感描述
 - **关键识别标记**：至少3个独特视觉锚点（如：胸口徽章、蓝色光眼、肩部排气管）
-- **ref_description**（英文）：传给图片模型的简明角色说明，格式为 "This is [角色名] ([角色身份]). [外观概要]. He/She is the [PROTAGONIST/ANTAGONIST/etc]."
+- **ref_description**：这是给图片模型的角色参考说明，允许使用英文，因为角色参考图阶段仍可能由图片模型受益于英文描述。
+
+### 2.3 语言规则
+
+从现在开始，必须明确区分两类文本：
+
+1. **视频侧 / storyboard 侧字段：默认使用中文**
+   - `narrative_segment`
+   - `scene_prompt`
+   - `end_frame_description`
+   - `action_prompt`
+   - `lighting`
+   - `weather`
+   - `environment_description`
+   - `props`
+   - `motion_control.phase_beats`
+   - `subject_constraints.semantic_rules`
+   - 其他直接服务于视频生成和视频审查的描述字段
+
+2. **图片侧字段：允许使用英文**
+   - `characters.*.ref_description`
+   - 如后续存在专门传给图片模型的 image prompt，可按图片模型需要使用英文
+
+原则：
+- 字节 Seedance 视频链路支持中文，所以 storyboard 和视频提示词文件不再默认使用英文
+- 以后只要是视频生成相关的文本描述，默认都写中文
+- 不要再把“英文 prompt 习惯”带回 storyboard 主文件
 
 **示例：**
 - ❌ `"appearance": "一个蓝色的机器人"`
@@ -272,6 +316,62 @@ python3 ad_assets.py --mode character_refs --framework framework.json --output_d
 
 这两个字段不是注释，它们会直接进入图片 prompt、视频 prompt、质量审查和后续编辑决策。
 
+**⚠️ 强导演模式只用于复杂 shot，普通 shot 保持轻量。**
+
+以下 shot 必须进入**强导演模式**，先写 `director_plan` 再写字段：
+
+1. `shot_type = "transition_reveal"`
+2. 强动作 shot
+3. 明显情绪转折、身份确认、关系转折 shot
+4. `chain_from_previous = true` 的高衔接依赖 shot
+5. 中间需要 2 张及以上 `keyframes` 的 shot
+
+其他普通 shot 可以继续轻量写法，只要：
+- `scene_prompt` 清楚定义起点
+- `action_prompt` 清楚定义过程
+- `end_frame_description` 清楚定义落点
+
+**⚠️ 强导演模式下，先做导演设计，再做语义决策，最后才写字段。**
+
+在强导演模式下，母模型必须先完成一层 `director_plan`：
+
+1. 这镜**只完成什么戏剧动作**
+2. 这镜**明确不完成什么**
+3. 观众**按什么顺序获得信息**
+4. 谁是**变化主体**，谁是**稳定主体**
+5. 这镜要拆成**几个必要阶段**
+
+只有 `director_plan` 清楚后，才进入参考图策略判断。
+
+在写每个 shot 之前，必须先按 [reference/video_generation_strategy.md](/Users/huangzongning/openclaw/skills/xyz-video-skill/reference/video_generation_strategy.md) 判断这 4 个维度：
+
+1. 动作复杂度
+2. 状态变化幅度
+3. 起止姿态约束强度
+4. 与前后镜头的衔接依赖
+
+然后再决定该 shot 需要哪些用途驱动参考素材：
+
+- `first_frame`
+- `reference_character`
+- `reference_prop`
+- `reference_composition`
+- `reference_style`
+- `reference_stage`
+- `reference_target_state`
+
+最后才把这个决策落成字段：
+
+- `video_references`
+- `reference_strategy`（可选的分析字段）
+- `shot_type`
+- `continuity_mode`
+- `keyframes`（兼容表达中间阶段）
+- `time_beats`
+- `chain_from_previous`
+
+不要反过来先凭感觉写字段，再让字段替代判断。
+
 **输出 JSON → `{output_dir}/storyboard.json`：**
 
 ```json
@@ -297,18 +397,62 @@ python3 ad_assets.py --mode character_refs --framework framework.json --output_d
             "name": "场景名称（如：断桥雨中）",
             "location": "地点（如：杭州西湖断桥）",
             "narrative_segment": "对应 narrative 中的原文段落（从 framework.json 的 scene.narrative_segment 复制）",
-            "lighting": "光线参数（色温、方向、质感，英文）",
-            "weather": "天气/粒子效果（英文）",
+            "lighting": "光线参数（色温、方向、质感，中文）",
+            "weather": "天气/粒子效果（中文）",
             "props": ["道具1", "道具2"],
-            "environment_description": "环境视觉描述（英文，80-150字。同场景所有镜头共享的视觉基底）",
+            "environment_description": "环境视觉描述（中文，80-150字。同场景所有镜头共享的视觉基底）",
+            "scene_continuity": {
+                "stable_facts": {
+                    "spatial_layout": ["稳定空间关系事实1", "稳定空间关系事实2"],
+                    "prop_states": ["稳定道具状态事实1"],
+                    "environment_states": ["稳定环境状态事实1"],
+                    "character_states": ["稳定角色状态事实1"]
+                },
+                "entity_registry": {
+                    "prop_id": {
+                        "count": 1,
+                        "holder": "character_id_1.right_hand",
+                        "persistent_state": "持续状态描述"
+                    }
+                },
+                "carry_forward_subjects": ["character_id_1", "character_id_2", "prop_id"]
+            },
             "shots": [
                 {
                     "id": 1,
                     "characters_in_shot": ["character_id_1", "character_id_2"],
                     "narrative_segment": "本镜头对应的 narrative 片段（从 scene 的 narrative_segment 中进一步切分）",
-                    "scene_prompt": "故事起点 + 起始画面状态（英文，从 narrative_segment 派生。见 5.5 规则）",
+                    "director_plan": {
+                        "dramatic_core": "这镜只完成什么戏剧动作",
+                        "not_this_shot": "这镜明确不完成什么",
+                        "viewer_information_flow": [
+                            "观众先知道什么",
+                            "观众再知道什么",
+                            "观众最后情绪落到哪里"
+                        ],
+                        "camera_intent": {
+                            "shot_purpose": "观察|揭示|压迫|跟随|等待",
+                            "framing_base": "基础景别和构图",
+                            "camera_contract": "机位、轴线、构图变化允许范围"
+                        },
+                        "stable_subjects": ["这一镜里基本不变的人或物"],
+                        "changing_subjects": ["这一镜里主要发生变化的人或物"],
+                        "invariants": ["整镜不变项1", "整镜不变项2"],
+                        "allowed_progressions": ["整镜允许推进的变化1"],
+                        "nodes": [
+                            {
+                                "id": "n1",
+                                "story_function": "第一个阶段负责什么",
+                                "visual_focus": "观众先看哪里",
+                                "must_show": ["该阶段必须出现的内容"],
+                                "must_not_show": ["该阶段不能提前完成的内容"],
+                                "delta_from_previous": "相对上一阶段的主变化"
+                            }
+                        ]
+                    },
+                    "scene_prompt": "故事起点 + 起始画面状态（中文，从 narrative_segment 派生。见 5.5 规则）",
                     "end_frame_description": "故事终点 + 结束画面状态（必填！从 narrative_segment 派生。见 5.6 规则）",
-                    "action_prompt": "动作描述（从 narrative_segment 派生，只写运动过程）",
+                    "action_prompt": "动作描述（中文，从 narrative_segment 派生，只写运动过程）",
                     "camera_movement": "运镜方式",
                     "camera_technical": "焦距+光圈",
                     "speed_baseline": "1.0x",
@@ -316,17 +460,34 @@ python3 ad_assets.py --mode character_refs --framework framework.json --output_d
                     "tts_text": "",
                     "subtitle": "",
                     "estimated_duration": 8,
+                    "reference_strategy": "anchor_with_end",
                     "shot_type": "visible_subject",
                     "chain_from_previous": false,
                     "continuity_mode": "scene_end",
+                    "time_beats": [
+                        "0-2s：主体保持当前状态，镜头先建立画面",
+                        "2-4s：出现第一段明确的动作或状态推进",
+                        "4-6s：镜头落到最终结果状态"
+                    ],
                     "subject_constraints": {
                         "required_visible_subjects": ["character_id_1"],
                         "optional_visible_subjects": ["character_id_2"],
                         "offscreen_subjects": [],
                         "continuity_subjects": ["character_id_1"],
                         "forbidden_visible_subjects": [],
-                        "semantic_rules": ["Keep the action semantically continuous within this shot."]
+                        "semantic_rules": ["保持本镜头内的动作与主体关系连续。"],
+                        "pose_contract": ["如果该角色在首帧、关键帧、尾帧之间必须保持同一承重姿态，就在这里写固定身体支撑关系。"],
+                        "gaze_contract": {
+                            "character_id_1": {
+                                "primary_target": "character_id_2",
+                                "target_zone": "画面右侧近处"
+                            }
+                        }
                     },
+                    "shot_delta": [
+                        "本镜头只允许发生的变化1",
+                        "其他空间关系、姿态、道具状态保持不变"
+                    ],
                     "motion_control": {
                         "subject_facing": "away_from_camera",
                         "camera_relation": "rear_three_quarter",
@@ -358,17 +519,57 @@ python3 ad_assets.py --mode character_refs --framework framework.json --output_d
 - 对多人强交互镜头，`action_prompt` 和 `motion_control.phase_beats` 必须能表达一条连续动作链
 - 如果这是同一时刻的连续切镜，要用 `chain_from_previous=true`
 - 如果只是同场景连续动作但不是同一视觉时刻，不要滥用 `chain_from_previous`
+- 如果下一镜 `chain_from_previous=true`，当前镜必须产出可复用的结束状态，通常应强制尾帧
+- `keyframes` 是否需要，不由“有没有这个字段”决定，而由该 shot 的语义复杂度决定；字段只是承载决策结果
+
+### 4.4 director_plan（强导演模式启用）
+
+`director_plan` 是复杂 shot 的导演设计层。它首先服务于母模型，不直接给最终用户看；但它决定后续 `scene_prompt / action_prompt / end_frame_description / keyframes` 应该怎么写。
+
+不要对所有 shot 一刀切。普通镜头可以轻量写法；只有高风险、高阶段依赖镜头才强制进入这层。
+
+核心规则：
+
+1. 一个 shot 只完成**一个戏剧动作**
+2. `director_plan.nodes` 是这个 shot 的**阶段节点**
+3. 第一个节点 = 首帧锚点
+4. 最后一个节点 = 尾帧锚点
+5. 中间节点 = `keyframes`
+
+也就是说：
+- 不先想“要几张 keyframe”
+- 先想“这个 shot 必须经过几个阶段”
+- 如果阶段太多、跳变太大，不是继续加 keyframe，而是这个 shot 应该拆开
+
+最小判断顺序：
+
+1. `dramatic_core`：这镜只完成什么
+2. `not_this_shot`：这镜明确不完成什么
+3. `viewer_information_flow`：观众先知道什么、再知道什么、最后落在哪里
+4. `nodes`：把这个过程拆成 2-4 个必要阶段
+5. 再把这些阶段投影成现有字段
+
+投影规则：
+- `scene_prompt` = `nodes[0]` 的故事起点和起始画面状态
+- `end_frame_description` = `nodes[-1]` 的明确结果落点
+- `keyframes` = `nodes[1:-1]`
+- `action_prompt` = 各节点之间的过渡过程
+- `continuity_mode` = 最终落点约束强度
+- 建议每个 shot 显式产出 `reference_strategy`，作为“语义决策层”的可见结果
+- 如果镜头内部存在明确阶段推进，建议显式产出 `time_beats`
+- 连续场景应优先声明 `scene_continuity`
+- 人物支撑姿态不能漂移的镜头应写 `subject_constraints.pose_contract`
+- “看向谁”本身是叙事推进关键时，应写 `subject_constraints.gaze_contract`
+- 每个 shot 最好显式写出 `shot_delta`，明确“这一镜只改变什么”
 
 ### 4.x 当前视频 prompt 的额外 guardrails
 
-当镜头属于多人强交互 shot 时，系统现在会自动在视频 prompt 里加入负向规则，压制以下错误：
+当前视频 prompt 应区分两层：
 
-- 中途脱离交战再返回
-- 同一 shot 内把一次连续交锋变成两次独立交锋
-- 重置距离、方位、战场位置
-- 攻击者 / 防御者方向逻辑崩坏
+- 审阅层：可保留分镜主旨、策略判断、设计理由，供人审阅
+- 模型层：只保留给 Seedance 的可执行视觉描述
 
-所以你在写 `action_prompt` 时，不要只写“有什么动作”，还要确保 narrative 本身能支持“动作关系连续”。
+所以你在写 `action_prompt`、`time_beats`、`motion_control` 时，不要混入“让观众感受到”“为后面做准备”“执拗感更强”这类抽象导演评论。模型层只写谁在动、动哪里、画面关系如何变化。
 
 ### 4.1 场景（Scene）层级 — 视觉基底共享
 
@@ -382,10 +583,10 @@ python3 ad_assets.py --mode character_refs --framework framework.json --output_d
 | `name` | 场景名称 | `"断桥雨中"` |
 | `location` | 地点 | `"杭州西湖断桥"` |
 | `narrative_segment` | 对应 narrative 中的原文段落 | 从 framework scenes 复制 |
-| `lighting` | 光线参数（色温、方向、质感） | `"overcast diffused light, cool blue-grey 6500K"` |
-| `weather` | 天气/粒子效果 | `"gentle rain with visible streaks, fog over lake"` |
+| `lighting` | 光线参数（色温、方向、质感，中文） | `"阴天漫射冷光，偏冷蓝灰，约6500K"` |
+| `weather` | 天气/粒子效果（中文） | `"细密冷雨，远处湖面薄雾"` |
 | `props` | 场景核心道具列表 | `["oil-paper umbrellas", "stone bridge"]` |
-| `environment_description` | 环境视觉描述（80-150字） | 地面材质、远景、建筑、水面等完整描述 |
+| `environment_description` | 环境视觉描述（中文，80-150字） | 地面材质、远景、建筑、水面等完整描述 |
 
 **场景拆分规则：** 场景从 framework.json 的 scenes 继承（已经按 narrative 切分好了）。当以下任一条件变化时，必须拆成新场景：
 - 光线发生质变（如从阴雨变为雨霁暖光）
@@ -460,9 +661,30 @@ python3 ad_assets.py --mode character_refs --framework framework.json --output_d
 
 **硬性约束：**
 - **每个镜头只做一个动作** — 一个镜头 = 一个清晰的视觉事件。如果你想写"A攻击B，B反击，然后A找到破绽刺穿B"，这必须拆成3个镜头。
-- **每个镜头 5-12 秒** — 根据动作复杂度自由估算 `estimated_duration`：简单静态/对峙 5-6秒，中等动作 7-9秒，复杂变形/战斗 10-12秒。Seedance API 支持 [5, 12] 区间任意整数。
+- **每个镜头 5-12 秒** — 但 `estimated_duration` 不应主要按动作复杂度拍脑袋决定，而应按**导演节奏**决定。Seedance API 支持 [5, 12] 区间任意整数。
 - **首帧到尾帧的动作路径必须物理合理** — 不能出现角色瞬移、位置互换、违反惯性的运动
 - 总镜头数 ≈ total_duration ÷ 平均镜头时长（通常 7-10 秒/镜头）
+
+**导演版时长判断顺序：**
+1. 先看这镜有几个必要阶段
+2. 再看观众需要多久看清关键信息
+3. 再看最终落点是否需要停留半拍到一拍
+4. 最后再看它在整段剪辑里是快切镜还是收束镜
+
+**不要再这样想：**
+- 轻动作 = 5-6 秒
+- 中动作 = 7-9 秒
+- 重动作 = 10-12 秒
+
+**要改成这样想：**
+- **2 个阶段 + 无明显停留** → 可短
+- **3 个阶段 + 需要完成确认 / reveal** → 中等
+- **3 个阶段 + 情绪落点需要停留** → 中偏长
+- **4 个阶段以上** → 先考虑拆 shot，不先靠拉长时长解决
+
+一句话：
+- **estimated_duration = 阶段推进时间 + 落点停留时间**
+- 不是 **estimated_duration = 动作复杂度区间**
 
 ### 4.3 characters_in_shot（必填）
 
@@ -493,32 +715,34 @@ python3 ad_assets.py --mode character_refs --framework framework.json --output_d
 
 ### 4.5 scene_prompt 规则（这个镜头要讲什么 + 开始时的画面状态）
 
-**scene_prompt = 故事上下文 + 视觉起始状态。** 环境/光线/天气不需要写——由 scene 层自动提供。用英文撰写。
+**scene_prompt = 第一个阶段的故事起点 + 视觉起始状态。** 环境/光线/天气不需要写——由 scene 层自动提供。默认用中文撰写。
 
 **⚠️ 核心原则：scene_prompt 不是孤立的画面描述，它是故事线上的一个锚点。**
 
-代码会用 scene_prompt + action_prompt + end_frame_description 三个字段的完整故事上下文，通过 LLM 提取出精确的首帧生图 prompt。所以 scene_prompt 的职责是**讲清楚这个镜头的故事起点**：
+代码会用 scene_prompt + action_prompt + end_frame_description 三个字段的完整故事上下文，通过 LLM 提取出精确的首帧生图 prompt。所以 scene_prompt 的职责是**讲清楚这个镜头第一个阶段的故事起点**：
 
-1. **故事上下文** — 这个镜头要讲什么？角色带着什么意图/情感进入这个画面？
+1. **第一阶段的任务** — 这个阶段只负责建立什么
 2. **视觉起始状态** — 角色的精确位置、姿态、朝向、手持物品、空间关系
 3. **构图** — 景别、角度
+
+不要把整个 shot 的发展过程塞进 `scene_prompt`。如果写成“这镜发生什么”，首帧就会偷跑到中段甚至终点。
 
 **三段式故事线：**
 | 字段 | 故事作用 | 描述什么 |
 |------|----------|----------|
-| `scene_prompt` | 故事起点 | 这个镜头要讲什么 + 动作即将开始时的画面状态 |
-| `action_prompt` | 故事过程 | 从起点到终点之间发生的运动 |
-| `end_frame_description` | 故事终点 | 故事发展到哪了 + 动作完成后的画面状态 |
+| `scene_prompt` | 第一个阶段 | 动作即将开始时的画面状态 |
+| `action_prompt` | 阶段过渡 | 阶段1如何到阶段2，阶段2如何到阶段3 |
+| `end_frame_description` | 最后一个阶段 | 动作完成后的明确落点 |
 
 三个字段构成一条**因果链**。代码会将完整因果链交给 LLM 提取首帧/尾帧生图 prompt，使首尾帧天然带有故事方向，Seedance I2V 能顺着这个方向做运动插值。
 
 **示例 — 递伞场景：**
-- ❌ "The woman extends her umbrella toward the scholar"（纯动作，无故事上下文，无起始状态）
-- ✅ "Moved by compassion for the rain-soaked scholar, the woman in white has walked over from the bridge to the pavilion edge. She stands holding her cream oil-paper umbrella, looking down at the scholar who sits on the stone step catching his breath, scattered damp pages at his feet. She is about to step forward and offer her umbrella. Medium two-shot at eye level, two meters apart."（有意图、有状态、有空间关系）
+- ❌ "女人把伞递向书生"（纯动作，无故事上下文，无起始状态）
+- ✅ "她看见书生浑身湿透地蜷在亭边石阶上，终于压不住心里的怜悯，已经从桥上走到亭边。她手里稳稳举着油纸伞，低头看向仍在喘息的书生，脚边散着被雨打湿的纸页。她正准备再向前一步，把伞递过去。平视中景双人镜头，两人相距约两米。"（有意图、有状态、有空间关系）
 
 **示例 — 战斗场景：**
-- ❌ "The robot slashes at the enemy with its blade"（动作正在发生，无故事起点）
-- ✅ "Having spotted a weakness in the enemy's defenses, the robot warrior locks onto its target and raises its blade high in attack stance, facing the enemy across the intersection. The moment before the decisive strike. Low angle hero shot."（有意图、有蓄力姿态、有叙事张力）
+- ❌ "机器人挥刀砍向敌人"（动作正在发生，无故事起点）
+- ✅ "它已经看准敌方防线的破口，身体在路口中央稳稳锁定目标，刀臂高高抬起，蓄势待发，正处于致命一击落下前的那一瞬。低机位英雄式构图。"（有意图、有蓄力姿态、有叙事张力）
 
 **禁止：**
 - 写角色外貌/服装（单一真相源原则，代码自动注入）
@@ -545,11 +769,13 @@ python3 ad_assets.py --mode character_refs --framework framework.json --output_d
 
 **⚠️ end_frame_description 不是孤立的画面描述，它是故事线上的终点锚点。**
 
-代码会用完整故事上下文（scene_prompt + action_prompt + end_frame_description）通过 LLM 提取出精确的尾帧生图 prompt。所以 end_frame_description 的职责是**讲清楚这个镜头的故事终点**：
+代码会用完整故事上下文（scene_prompt + action_prompt + end_frame_description）通过 LLM 提取出精确的尾帧生图 prompt。所以 end_frame_description 的职责是**讲清楚这个镜头最后一个阶段的明确落点**：
 
-1. **故事进展** — 动作完成后，故事推进到了什么状态？角色的情感/意图发生了什么变化？
+1. **结果状态** — 动作完成后，故事推进到了什么状态
 2. **视觉结束状态** — 角色的精确位置、姿态、表情、手持物品
-3. **过渡暗示**（如果下一个镜头有变化）— 为下一镜头的视觉过渡埋伏笔
+3. **下镜接口**（如需要）— 为下一镜头的视觉衔接留下稳定落点
+
+不要把“也许会发生什么”写进 `end_frame_description`。它负责的是最后一个阶段已经到达的状态，不是泛泛的结尾气氛。
 
 **示例 — 递伞场景：**
 - ❌ "Close-up of two hands on the umbrella handle."（纯画面描述，无故事进展）
@@ -613,7 +839,7 @@ python3 ad_assets.py --mode character_refs --framework framework.json --output_d
 
 **首尾帧生成策略（由 `continuity_mode` 控制）：**
 
-每个 shot 必须标注 `continuity_mode`，由你根据叙事结构判断。代码根据这个字段决定是否生成尾帧图。
+每个 shot 必须标注 `continuity_mode`，但这个字段应当是语义决策的结果，不是随手填写。代码根据它决定是否生成尾帧图。
 
 | 模式 | 含义 | 代码行为 |
 |------|------|---------|
@@ -644,9 +870,36 @@ python3 ad_assets.py --mode character_refs --framework framework.json --output_d
 
 ### 4.6.3 keyframes（中间关键帧，可选）
 
-**仅当 `continuity_mode: "strict"` 且动作复杂时使用。**
+先说新的主原则：
 
-如果一个镜头内有多个关键姿态变化，不是简单的首帧 A → 尾帧 B 单向运动，可以标注中间关键帧：
+- Seedance 2.0 的多参考图主脑不是“首帧 / 尾帧 / 中间硬关键帧插值”
+- 执行层现在会把所有视频参考素材统一归一成 `video_references`
+- 每张参考图都必须先定义**用途**，再在视频 prompt 里用 `@图片N` 显式调用
+- `keyframes` 仍保留，但它现在是“中间阶段参考”的兼容写法，不再代表模型必须命中的时间点
+
+`keyframes` 是否需要，先看导演阶段，不先看字段。
+
+核心规则：
+- `keyframes` 不是“中间插几张图”
+- `keyframes` 是这个 shot **不能省略的中间阶段**
+- 第一个阶段属于 `scene_prompt`
+- 最后一个阶段属于 `end_frame_description`
+- 只有中间阶段才写成 `keyframes`
+
+也就是说：
+- `director_plan.nodes = [起点, 中段1, 中段2, 终点]`
+- 那么 `keyframes = [中段1, 中段2]`
+
+只有当以下至少一类需求成立时，才应该写 `keyframes`：
+
+- 动作复杂度中到高
+- 状态变化幅度中到高
+- 中间过程比终点本身更重要
+- 首尾两点不足以稳定约束镜头过程
+
+`continuity_mode: "strict"` 往往会和 `keyframes` 同时出现，但不是唯一前提。
+
+如果一个镜头内有多个不能省略的中间阶段，不是简单的首帧 A → 尾帧 B 单向运动，可以标注中间关键帧：
 
 ```json
 "keyframes": [
@@ -658,43 +911,148 @@ python3 ad_assets.py --mode character_refs --framework framework.json --output_d
 **规则：**
 - `timestamp` 必须在 `0` 到 `estimated_duration` 之间，且按时间递增
 - `description` 遵守单一真相源：写姿态、位置、动作、场景，不写外貌
-- `keyframes` 是 storyboard 的通用字段，用来表达“镜头中间关键状态”
-- 当前执行层里，只有支持多参考图的模型（如支持多参考图的 Seedance 2.0 类模型）会真正把 `keyframes` 转成参考图使用
-- 其他只支持首尾帧的视频模型会自动忽略 `keyframes`，继续只用首帧 / 尾帧
+- `keyframes` 是 storyboard 的兼容字段，用来表达“镜头中间关键状态”
+- 当前执行层会把它们映射成 `video_references[].usage = "reference_stage"`
+- Seedance 2.0 看到的是“用途驱动参考素材 + @引用调用”，不是旧式时间点插值协议
+- 其他只支持有限参考图的视频模型会按用途优先级裁剪参考素材
+
+### 4.6.3.0 video_references（视频参考素材协议，推荐）
+
+从现在开始，写 storyboard 时推荐把视频参考素材显式写成 `video_references`。
+
+推荐用途：
+- `first_frame`
+- `reference_character`
+- `reference_prop`
+- `reference_composition`
+- `reference_style`
+- `reference_color`
+- `reference_stage`
+- `reference_target_state`
+
+执行层会优先读取 `video_references`；如果没写，才会从首帧 / 角色参考图 / 场景图 / `keyframes` / 尾帧自动合成一份用途驱动参考清单。
+
+示例：
+
+```json
+"video_references": [
+  {"source_type": "frame", "source_id": "first_frame", "usage": "first_frame"},
+  {"source_type": "scene", "usage": "reference_composition"},
+  {"source_type": "character", "source_id": "medical_girl", "usage": "reference_character", "subject": "medical_girl"},
+  {"source_type": "prop", "source_id": "oil_paper_umbrella", "usage": "reference_prop", "subject": "oil_paper_umbrella"},
+  {"source_type": "stage", "source_id": "1", "usage": "reference_stage", "stage": "confirm_source"},
+  {"source_type": "frame", "source_id": "target_state", "usage": "reference_target_state"}
+]
+```
+
+语义原则：
+- 先定义“这张图拿来干什么”
+- 再让执行层在视频 prompt 中写成 `@图片1 作为首帧`、`@图片2 参考角色` 这类显式调用
+- 不再把所有图片都当成同权重的 `reference_image`
 
 **何时标注 `keyframes`：**
 - 镜头内有明确的阶段性姿态变化（如：蹲下 → 起身 → 转身）
 - 需要精确控制中间某个时刻的画面状态
 - 动作路径复杂，首尾帧不足以约束
+- 情绪或关系变化需要经过明确的多个状态节点
+
+**何时应该拆 shot，而不是继续加 `keyframes`：**
+- 中间阶段已经超过 4 个
+- 相邻阶段之间不止一个主变化
+- 人物状态、镜头尺度、空间关系同时大跳
+- 某个中间阶段已经像“另一镜”而不是“同一镜中的一步”
 
 **何时不要标注：**
 - 简单的 A → B 运动（走、转头、伸手）
 - 连续流畅的动作（跑步、挥手）
 - 大部分普通推进镜头
+- `offscreen_reaction` / 纯氛围镜头 / 不应出现中间实体 reveal 的镜头
 
-#### 4.6.3.1 参考图分配规则（最多 9 张）
+### 4.6.3.1 time_beats（时间节拍，可选但重要）
 
-当当前视频模型支持多参考图时，代码按以下顺序分配参考图槽位：
+`time_beats` 用来表达镜头内部的时间推进，主要服务于最终给 Seedance 的视频 prompt。
 
-1. **首帧图** — 永远占用第 1 张
-2. **中间关键帧 `keyframes`** — 占用中间槽位
-3. **尾帧图** — 如果该 shot 根据 `continuity_mode` 需要尾帧约束，则占用最后 1 张
+推荐格式：
 
-**槽位计算：**
-- 如果该 shot 需要尾帧图：`1 张首帧 + 最多 7 张 keyframes + 1 张尾帧 = 最多 9 张`
-- 如果该 shot 不需要尾帧图：`1 张首帧 + 最多 8 张 keyframes = 最多 9 张`
+```json
+"time_beats": [
+  "0-2s：固定近景，主体保持当前状态",
+  "2-4s：出现第一段明确动作或状态变化",
+  "4-6s：镜头落到最终结果状态"
+]
+```
+
+规则：
+- `time_beats` 是给模型看的时间脚本，必须写成可执行的视觉描述
+- 不要写“让观众感到”“情绪更强”“为后面做准备”这类抽象导演语言
+- 要写清楚谁在动、动哪里、画面位置是否变化、物件是否变化
+- `time_beats` 可以存在，但不一定生成 `keyframes`
+- 如果某一段视觉差异不足，就只保留为时间节拍，不要硬升成关键帧
+
+#### 4.6.3.2 参考图分配规则（最多 9 张）
+
+当当前视频模型支持多参考图时，代码会先组装 `video_references`，再按用途优先级裁剪。
+
+**默认自动组装来源：**
+1. **首帧图** → `first_frame`
+2. **scene 图** → `reference_composition`
+3. **角色参考图** → `reference_character`
+4. **道具参考图** → `reference_prop`
+5. **中间阶段图**（通常来自 `keyframes`）→ `reference_stage`
+6. **目标状态图**（根据 `continuity_mode` 决定是否存在）→ `reference_target_state`
 
 **代码行为：**
 - 代码会根据当前视频模型的 `max_reference_images` 自动计算可用槽位
-- 如果 storyboard 中标注的 `keyframes` 超过可用数量，代码只保留前面的关键帧
-- 因此，越重要的中间状态应该越靠前写
-- 当前执行层中，多参考图分配主要用于支持多参考图的 Seedance 2.0 类模型
-- 其他只支持首尾帧的视频模型会自动忽略 `keyframes`，继续只使用首帧 / 尾帧
+- 如果参考素材超限，不再按“首帧 / keyframes / 尾帧”裁，而是按用途优先级裁
+- 当前优先级大致是：
+  1. `first_frame`
+  2. `reference_character`
+  3. `reference_prop`
+  4. `reference_composition`
+  5. `reference_style`
+  6. `reference_color`
+  7. `reference_target_state`
+  8. `reference_stage`
+- 因此，真正容易被裁掉的通常是中间阶段参考，而不是首帧、角色或关键道具
 
-**示例：**
-- `continuity_mode: "strict"` 且有尾帧 → 最多可写 7 个 `keyframes`
-- `continuity_mode: "scene_end"` 且当前不是 scene 最后一个 shot → 无尾帧，最多可写 8 个 `keyframes`
-- `continuity_mode: "free"` → 不建议写 `keyframes`，代码会忽略
+**写 storyboard 时的指导：**
+- 真正关键的参考素材，优先显式写进 `video_references`
+- `keyframes` 只用来表达“中间阶段确实重要”，不要再把它当唯一的中段控制入口
+- 如果某个中间状态没有独立用途，就不要为了“多给一张图”而写进去
+
+**母模型在写 storyboard 时的实际判断顺序应该是：**
+
+1. 先看这个 shot 的 narrative 任务是什么
+2. 再按 4 个语义维度判断参考图策略
+3. 再决定是否需要 `chain_from_previous`
+4. 产出 `video_references`
+5. 如有需要，再补 `reference_strategy`
+6. 判断是否需要 `time_beats`
+7. 最后输出 `shot_type`、`continuity_mode`、`keyframes`
+
+### 4.6.3.3 `reference_strategy`（建议显式产出）
+
+为避免“明明做了语义判断，但 storyboard 里看不出来”，建议每个 shot 额外显式写出：
+
+```json
+"reference_strategy": "single_anchor"
+```
+
+允许值：
+- `single_anchor`：仅首帧
+- `anchor_with_end`：首帧 + 尾帧
+- `anchor_with_keyframes`：首帧 + 中间 keyframes
+- `anchor_keyframes_end`：首帧 + 中间 keyframes + 尾帧
+
+这个字段当前主要用于让母模型的策略判断结果可见、可审核。
+执行层真正优先读取的是：
+- `video_references`
+- `shot_type`
+- `continuity_mode`
+- `keyframes`
+- `chain_from_previous`
+
+因此从现在开始，写 storyboard 时应优先先产出 `video_references`，再决定是否额外显式写 `reference_strategy`。
 
 **示例 — 适合链式：**
 - Shot 3: 两人对话中景 → Shot 4: 同一场景两人继续对话，镜头略推近
@@ -704,7 +1062,70 @@ python3 ad_assets.py --mode character_refs --framework framework.json --output_d
 - Shot 3（递伞手部特写）→ Shot 4（断桥全景）：景别跳转
 - Shot 2（雨天亭下）→ Shot 3（雨中桥上）：场景变化
 
-### 4.6.4 transition_in（剪辑转场）
+### 4.6.4 强动作镜头规则（必须当成导演调度稿来写）
+
+**这是当前视频生成里最容易写差、也最影响模型表现的一类 shot。**  
+如果镜头包含扑击、打斗、摔倒、脱手、追逐、爆发式转身、强烈肢体冲突，不能只写一句“事件摘要”，必须把它写成一个有节拍的镜头内动作设计。
+
+**先判断这是不是强动作 shot：**
+- 镜头内存在明显的爆发动作，而不是平缓位移
+- 至少两个主体之间存在高强度交互或对抗
+- 结果姿态与起始姿态差异很大
+- 如果只给首帧和尾帧，模型大概率会用平滑补间糊过去
+
+**一旦属于强动作 shot，必须同时满足以下规则：**
+1. `continuity_mode` 不能写 `"free"`，默认写 `"strict"`
+2. `action_prompt` 不能只写一句结果摘要，必须体现镜头内的节奏变化
+3. `motion_control.phase_beats` 不能少于 3 段
+4. `keyframes` 不应只有 0 张；原则上至少 2 段关键状态
+5. `scene_prompt` / `action_prompt` / `end_frame_description` 必须能对应到同一条动作链，不能只写开头和结尾
+
+**强动作 shot 的最小结构：**
+- 起势：谁先动，如何蓄力，危险从哪里来
+- 爆发：碰撞、闪躲、扑击、失衡、脱手、翻滚等关键事件
+- 落点：这一个 shot 结束时，角色和道具落到什么状态
+
+**强动作 shot 不要这样写：**
+- “老虎扑向武松，武松闪开，木棒脱手。”
+- 这是剧情摘要，不是镜头调度。模型只会把它理解成一条模糊的 A→B 变化。
+
+**强动作 shot 应该这样写：**
+- `scene_prompt` 交代爆发前 0.5-1 秒的紧绷状态
+- `action_prompt` 写出动作的节奏曲线：突然爆发、瞬间失衡、短促碰撞、结果落点
+- `end_frame_description` 只负责定义这一 shot 必须精确到达的最终状态
+- `motion_control.phase_beats` 至少拆成：
+  - 起势
+  - 爆发/碰撞
+  - 结果姿态
+
+**`keyframes` 规则要升级：**
+- 普通叙事镜头：`keyframes` 可以没有或只有 1 张
+- 强动作镜头：默认至少 2 张，分别锚定“爆发中段”和“结果前一拍”
+- 如果镜头里还有明显的武器脱手、主体位置互换、压制关系反转，应该继续增加关键帧，而不是让模型自行脑补
+
+**写 `action_prompt` 时必须补足这些维度：**
+- 爆发方式：sudden / explosive / violent / abrupt，而不是 only “moves”
+- 力度变化：猛扑、急闪、撞击、失衡、翻滚、压制
+- 节奏变化：先静后爆、短促碰撞、落地后的余势
+- 镜头关系：镜头是稳跟、被动作带动，还是保持观察位
+
+**判断写得够不够的自检标准：**
+- 如果把 `action_prompt` 拿掉，只剩首尾帧，模型会不会变成慢吞吞的补间？
+- 如果答案是“会”，那这个强动作 shot 写得还不够。
+
+**示例 — 武松打虎 shot 3：**
+- 不够好的写法：
+  - “The tiger lunges in a single explosive pounce while Wu Song dodges, swings the staff, and loses his weapon in the collision.”
+- 更符合强动作规则的写法：
+  - 起势：虎伏身蓄力，武松刚意识到扑击方向
+  - 爆发：老虎突然前扑，武松侧闪半步并本能横棒格挡，冲击把木棒震飞
+  - 落点：虎身擦落前景，木棒旋出画面，武松重心下坠进入失衡后的防守姿态
+
+**一句话原则：**
+- 普通 shot 可以写“发生了什么”
+- 强动作 shot 必须写“这个镜头内部是怎么打起来的”
+
+### 4.6.5 transition_in（剪辑转场）
 
 **每个 shot 必须标注 `transition_in`**，描述从前一个 shot 过渡到本 shot 时使用的剪辑转场效果。第一个 shot 的 transition_in 为 `null`。
 
@@ -740,17 +1161,33 @@ Shot 9→10: straight-cut（反打对望）
 
 ### 4.7 action_prompt 规则（只写视觉动作！）
 
-**首帧图已经确定了画面，action_prompt 只描述运动/动作变化。** 角色外貌由代码通过结构化 prompt 自动注入到视频生成请求中，此字段**禁止任何外貌描述**。
+**首帧图已经确定了画面，action_prompt 只描述阶段之间的运动/动作变化。** 角色外貌由代码通过结构化 prompt 自动注入到视频生成请求中，此字段**禁止任何外貌描述**。
 
 关键原则 — **"首帧决定视觉"：**
 - 首帧图锚定了角色外貌、场景环境、光影氛围
-- action_prompt 只需要告诉 Seedance "从首帧到尾帧之间发生了什么运动"
+- action_prompt 只需要告诉 Seedance "各阶段之间发生了什么过渡"
+- 不要再把 `action_prompt` 写成剧情摘要
+- 推荐按顺序写：阶段1如何到阶段2，阶段2如何到阶段3
 - 描述的动作必须在该镜头的 estimated_duration 内可完成
 - 代码会自动构建结构化视频 prompt：`【角色外观设定】+ 【场景动作】+ 【一致性要素】`
 
 **示例：**
 - ❌ "The 40-foot tall blue-red robot warrior with riveted armor in the destroyed city at sunset slowly pulls its blade..." （重复了外貌和场景）
 - ✅ "The robot slowly pulls its energy blade out of the enemy's chest with a grinding metal sound, the enemy's optics flash once then go permanently dark, the enemy's body tips backward and crashes onto the asphalt sending dust upward"
+
+**强动作镜头额外要求：**
+- 不能只写“谁打了谁”，必须写出动作的节拍和冲击链
+- 优先使用能表达节奏的动词：`surges`, `snaps`, `slams`, `jerks`, `whips`, `bursts`, `crashes`, `stumbles`, `locks`
+- 避免只用平缓词：`moves`, `goes`, `turns`, `changes position`
+- 如果镜头内有明显的先静后爆、碰撞后失衡、武器脱手、角色压制关系变化，必须写进 `action_prompt`
+
+**错误示例（强动作 shot）：**
+- “He fights the tiger and gains the upper hand.”
+- “The tiger attacks and Wu Song responds.”
+
+**正确方向（强动作 shot）：**
+- “The tiger explodes forward from a low crouch; Wu Song snaps sideways into a hurried dodge, catches the pounce on the staff for a fraction of a beat, and the impact jerks the weapon out of his hands.”
+- “Wu Song surges chest-first into the tiger, collides hard at shoulder level, both bodies tumble through leaves and rock dust, and he fights to climb into partial top control.”
 
 ### 4.8 PONYO 6D 物理系统
 
@@ -799,6 +1236,114 @@ Seedance 1.5 Pro 支持音画同轨生成（`generate_audio: true`），narratio
 - `expression`：该角色在此镜头中的情绪/表情状态
 - `environment`：该镜头必须出现的环境要素（保证跨镜头场景连贯）
 
+### 4.10.1 scene_continuity（场景级连续性事实）
+
+当一个 scene 内存在不应漂移的空间关系、道具状态、环境状态或角色稳定状态时，必须在 scene 层声明 `scene_continuity`。
+
+```json
+"scene_continuity": {
+    "stable_facts": {
+        "spatial_layout": ["角色A始终在角色B身后偏右"],
+        "prop_states": ["油纸伞始终由角色A右手持有"],
+        "environment_states": ["崖壁位置和道路朝向保持不变"],
+        "character_states": ["角色A始终靠近墙根区域"]
+    },
+    "entity_registry": {
+        "oil_paper_umbrella": {
+            "count": 1,
+            "holder": "character_a.right_hand",
+            "persistent_state": "滴水、暖黄色、微微歪斜"
+        }
+    },
+    "carry_forward_subjects": ["character_a", "character_b", "oil_paper_umbrella"]
+}
+```
+
+规则：
+- `stable_facts` 不能写成一大段散文，必须拆成逐条稳定事实
+- 每条事实都应能被单独注入 prompt、单独检查
+- 这层表达“默认继承的稳定基线”，不是表达镜头内部变化
+- `entity_registry` 用来声明 scene 级唯一实体及其持续状态，避免同一把伞、同一把刀被重复生成
+
+### 4.10.2 pose_contract（角色姿态合同）
+
+当同一角色在首帧、keyframes、尾帧之间必须维持同一种身体支撑状态时，必须在 `subject_constraints.pose_contract` 中写出固定姿态合同。
+
+示例：
+- `身体重心始终落在地面与右侧墙根交界处`
+- `上身持续斜靠墙面，支撑点不变`
+- `下肢保持坐地承重，不转为站立承重`
+
+规则：
+- 只写物理支撑关系，不写抽象情绪词
+- 优先写重心、支撑点、承重方式、与墙地或关键道具的关系
+- 如果缺少这层，模型很容易把“倚靠”“虚弱举伞”分别画成坐姿、半蹲或站姿
+
+### 4.10.2.1 gaze_contract（角色视线合同）
+
+当“角色看向谁”本身就是叙事推进的一部分时，必须在 `subject_constraints.gaze_contract` 中写出正向视线合同。
+
+```json
+"gaze_contract": {
+    "medical_girl": {
+        "primary_target": "swordsman",
+        "target_zone": "身后右侧崖壁附近"
+    }
+}
+```
+
+规则：
+- `gaze_contract` 属于 `subject_constraints` 的一部分，不单独新增顶层字段
+- 推荐只写：
+  - `primary_target`
+  - `target_zone`
+- 不写负向 `forbidden_gaze`
+- 如果镜头里存在“回头、认出、盯住、对视、发现来源”这类推进，强烈建议填写
+
+### 4.10.3 shot_delta（本镜头变化边界）
+
+每个 shot 应尽量写 `shot_delta`，明确“这一镜到底允许改变什么”。
+
+```json
+"shot_delta": [
+    "本镜头只改变女孩的视线方向与上半身朝向",
+    "男主姿态、持伞手、空间位置保持不变"
+]
+```
+
+规则：
+- `shot_delta` 只写本镜头允许发生的变化
+- 没写进 `shot_delta` 的变化，不应被模型随意新增
+- 这层用于把“该推进的叙事变化”和“必须保持稳定的事实”拆开
+
+### 4.10.4 参考图叙事锚点规则
+
+每张参考图都必须是时间线上的一个明确叙事状态节点，而不是模糊的动作摘要。
+
+规则：
+- `scene_prompt` 对应首帧叙事锚点
+- `keyframes[].description` 对应中间叙事锚点
+- `end_frame_description` 对应结果叙事锚点
+- 每个锚点都应尽量写清：
+  - 主体姿态
+  - 主体视线落点
+  - 他者揭示程度
+  - 空间关系推进到哪一步
+
+如果一张参考图无法回答“它对应时间线的哪个节点”，说明这个锚点还不够可执行。
+
+### 4.10.5 参考图前置验证卡口
+
+在 Seedance 2.0 链路下，图片验证必须先于视频生成。
+
+规则：
+- 对于存在 `pose_contract`、`gaze_contract`、`scene_continuity`、`entity_registry` 的镜头，代码会先导出参考图验证 bundle
+- 参考图验证通过后，才允许进入视频生成
+- 验证重点是：
+  - 参考图是否对应明确叙事节点
+  - 是否违反姿态、视线、空间稳定事实
+  - 是否破坏实体唯一性
+
 ### 4.11 分镜连续性规则（Shot-to-Shot Continuity）
 
 **分镜不是独立的幻灯片，是一条连续的视觉流。** 写完所有分镜后，必须逐对检查连续性。
@@ -843,10 +1388,18 @@ scene_prompt（起始状态）→ action_prompt（运动过程）→ end_frame_d
 □ 逐对检查 Shot N end_frame → Shot N+1 scene_prompt 的状态连续性
   - 角色位置、状态、道具持有是否一致？
   - 是否有凭空出现/消失的元素？
+  - 是否违反 `scene_continuity.stable_facts`？
+  - 是否违反 `subject_constraints.pose_contract`？
+  - 是否超出 `shot_delta` 允许的变化范围？
 
 □ 检查每个 scene_prompt 是否是静态起始状态
   - 是否描述了"即将发生"而非"正在发生"的动作？
   - 是否适合生成一张静态首帧图？
+
+□ 检查每个 shot 的阶段职责是否清楚
+  - 每个节点是否只承担一个阶段任务？
+  - 中间节点是否偷跑到了终点？
+  - 是否存在“几张都和剧情有关，但不像同一个镜头过程”的情况？
 
 □ 检查跨 scene 边界的视觉过渡
   - 光线/天气/时间是否有突变？
@@ -855,6 +1408,11 @@ scene_prompt（起始状态）→ action_prompt（运动过程）→ end_frame_d
 □ 检查首帧-动作-尾帧因果链
   - 每个 shot 的 scene_prompt + action_prompt 能否自然导出 end_frame_description？
   - end_frame_description 中是否有无中生有的元素？
+
+□ 检查这个 shot 是否其实应该拆开
+  - 是否存在过多阶段？
+  - 是否需要靠增加大量 keyframes 才能勉强讲清？
+  - 如果删掉某个中间节点，这镜是否仍然成立？若成立，说明该节点不该保留；若不成立但变化又过大，说明该镜应拆分。
 ```
 
 ### 4.13 全剧本一次性生成
@@ -868,6 +1426,106 @@ scene_prompt（起始状态）→ action_prompt（运动过程）→ end_frame_d
 - consistency_anchors 中 must_show 特征在相邻镜头间保持一致
 
 生成前，先回顾所有 scenes，在心中规划好每个 shot 的内容和衔接，然后一次性输出。
+
+---
+
+## 步骤 4.5: 导演写帧级 prompt（核心新增）
+
+**思考在母模型脑子里完成，不甩给生图模型。**
+
+你（母模型）是导演。你设计了每个 shot 的姿态、情绪、构图、视线——这些画面在你脑子里。你应该把脑子里看到的画面用精确的语言写出来，交给生图模型执行。
+
+生图模型不会思考，只会执行。给它越精确的画面描述，出来的图越接近你的设想。
+
+### 4.5.1 导演逐帧写画面
+
+对每个 shot 的每一帧（首帧 / 关键帧 / 尾帧），按以下顺序思考：
+
+**1. 闭上眼睛，想象这个画面**
+
+- 这是第几拍？之前一拍画面是什么样的？
+- 这个镜头要表达什么情绪？观众此刻应该感受到什么？
+
+**2. 你看到了什么？**
+
+- 构图：主体在画面什么位置？占多大比例？
+- 光线：从哪个方向来？什么质感？
+- 人物：什么姿态？什么表情？视线看向哪里？
+- 环境：前景/中景/远景有什么？
+
+**3. 把这个画面写出来**
+
+- 写画面，不写故事（不是"她心生怜悯"，而是"她的表情从警惕变为柔和，眉头舒展"）
+- 写状态，不写过程（不是"她走向亭子"，而是"她站在亭子入口，身体朝向亭内"）
+- 写精确，不写模糊（不是"远处有个人"，而是"画面右三分之一处，一个模糊的人影，只露出轮廓"）
+
+### 4.5.2 输出格式
+
+创建 `director_prompts.json`：
+
+```json
+{
+  "shots": {
+    "1": {
+      "first_frame": {
+        "goal": "建立冷雨山道与女孩孤绝采药的第一拍",
+        "beat": 1,
+        "prompt": "全景建立镜头。冷雨压住喀斯特群山，潮湿发暗的青石古道向远处延伸。女孩独自蹲伏在画面左下区域，身体内收抵御寒冷，注意力压在地面的草药上。整张图先建立环境压迫感与人物的孤绝状态，不引入剑客和油纸伞。"
+      },
+      "last_frame": {
+        "goal": "建立镜头收束到女孩仍在执拗坚持的状态",
+        "beat": 2,
+        "prompt": "镜头推近后的全景偏中景。冷雨与群山的压迫感仍未改变，女孩依旧蹲伏在原地，肩背绷紧，只维持细小采药动作。画面终点仍停留在她独自硬撑的状态，不出现新的外部变量。"
+      },
+      "video_action": "镜头在冷雨中极缓向前推进，环境压迫感逐步加强。女孩基本保持蹲伏姿态，只保留克制的采药细小动作，整镜停留在孤绝而执拗的氛围里。"
+    },
+    "2": {
+      "first_frame": {
+        "goal": "把注意力压到手部和草药上",
+        "beat": 1,
+        "prompt": "近景固定镜头。画面焦点锁在女孩冻得发白的手指和那株带泥草药上，背景只保留被雨水浸透的深蓝衣袖和模糊冷雨。整张图只强调寒冷中的执拗专注，不引入剑客和油纸伞。"
+      },
+      "keyframes": [
+        {
+          "goal": "开始确认来源",
+          "beat": 2,
+          "timestamp": 5.0,
+          "prompt": "女孩身体已经转过大半，视线锁向身后右侧，情绪仍停留在确认中的紧绷阶段。剑客倚靠崖壁、歪斜举伞的状态开始清楚可辨，但画面还没有进入最终认出后的情绪收束。"
+        }
+      ],
+      "last_frame": {
+        "goal": "完成认出后的落点",
+        "beat": 3,
+        "prompt": "女孩已经完成急促回眸，眼神从警惕滑向湿润的微怔。画面右后方清楚交代出倚靠崖壁、歪斜举伞的重伤剑客，他为她挡住了雨。整张图进入被震动后的认出与松动状态，但还没有进入下一镜的庇护收束。"
+      },
+      "video_action": "女孩被遮雨动作突然打断后，头部和视线迅速转向身后右侧。随着回眸完成，画面逐步揭示出倚靠崖壁、歪斜举伞的重伤剑客，情绪从警惕滑向认出后的湿润微怔。"
+    }
+  }
+}
+```
+
+### 4.5.3 storyboard 与 director_prompts 的分工
+
+| 文件 | 写什么 | 服务于 |
+|------|--------|--------|
+| storyboard.json | 故事 + 约束 + 结构 + 连续性事实 | 生成计划 + 审片检查清单 |
+| director_prompts.json | 每一帧的精确画面描述 | 图片生成的直接输入 |
+
+- storyboard 回答"这个 shot 要做什么、有什么约束"
+- director_prompts 回答"这一帧画面上到底长什么样"
+
+同一个 shot，两种视角：一个是导演的计划书，一个是导演脑海里看到的画面。
+
+### 4.5.4 优先级规则
+
+**如果 director_prompts 存在：**
+- 生图时直接使用 director_prompts 中的帧级描述
+- 跳过 Flash 全局提取步骤
+- storyboard 的约束仍用于审片检查
+
+**如果 director_prompts 不存在：**
+- 回退到 Flash 全局提取（旧流程）
+- 从 storyboard 中提取画面描述
 
 ---
 
@@ -905,13 +1563,124 @@ python3 ad_compose.py \
    - `video_action_prompt` — 带故事方向的动作描述（给 Seedance 用）
    LLM 看到完整故事线 + 所有镜头上下文，提取出的 prompt 天然连贯。
 7. 按 `characters_in_shot` 逐个传角色参考图给图片模型
-8. 每个 shot：用 first_frame_prompt 生成首帧图 → 用 last_frame_prompt 生成尾帧图 → Seedance I2V 视频（首帧+尾帧+video_action_prompt）
-9. 如果 shot 标记了 `chain_from_previous: true`，从前一 shot 视频提取实际尾帧作为首帧（否则独立生成）
-10. 尾帧图根据 `continuity_mode` 决定是否生成：`"strict"` 强制生成，`"scene_end"` 仅 scene 末尾生成，`"free"` 跳过
-11. **视频质量自动检测**：每段视频生成后自动执行三重检测（详见下方），不合格则自动重试或裁剪
-12. 生成 BGM
+8. 每个 shot：用 first_frame_prompt 生成首帧图 → 用 last_frame_prompt 生成尾帧图 → 归一化生成 `video_references`
+9. Seedance I2V 不再按“首帧+尾帧+keyframes”硬编码组织，而是按用途驱动参考素材组织，并在 prompt 里显式调用：
+   - `@图片1 作为首帧`
+   - `@图片2 参考角色`
+   - `@图片3 参考构图`
+   - `@图片4 参考目标状态`
+10. 如果 shot 标记了 `chain_from_previous: true`，从前一 shot 视频提取实际尾帧作为首帧（否则独立生成）
+11. 尾帧图根据 `continuity_mode` 决定是否生成：`"strict"` 强制生成，`"scene_end"` 仅 scene 末尾生成，`"free"` 跳过
+12. **视频质量自动检测**：每段视频生成后自动执行三重检测（详见下方），不合格则自动重试或裁剪
+13. 生成 BGM
 
-### 6.1 两阶段视频质量审查
+---
+
+## 步骤 5.5: 导演审图（可选）
+
+如果启用 `--review-mode director_review`，每个 shot 的图片生成后会暂停，等待你（母模型）审图。
+
+### 5.5.1 审图流程
+
+```
+图片生成完成
+  ↓
+导出审图上下文到 image_audit/shot_{shot_id}/：
+  - review_context.json（shot、director_entry、scene_context）
+  - generated_image.png（生成的图片）
+  ↓
+【暂停，等待你的审图】
+  ↓
+你看图判断 → 创建 director_judge_result.json
+  ↓
+系统读取判断结果 → 执行决策：
+  - keep → 通过，继续生成视频
+  - regenerate → 使用 adjustment_prompt 重新生成图片（最多重试 3 次）
+```
+
+### 5.5.2 审图步骤
+
+**第一步：理解导演意图**
+
+读取 `review_context.json` 中的 `director_entry`（来自 `director_prompts.json`）：
+- `first_frame.prompt`：首帧你想要的画面
+- `last_frame.prompt`：尾帧你想要的画面
+- `video_action`：从首帧到尾帧的动作过程
+
+**第二步：理解约束条件**
+
+读取 `review_context.json` 中的 `shot.constraints`：
+- `pose_contract`：姿态合同——身体支撑关系必须保持
+- `gaze_contract`：视线合同——视线方向要求
+- `subject_constraints`：出镜控制（谁必须在、谁不能在）
+- `shot_delta`：允许的变化边界
+
+**第三步：查看生成的图片**
+
+**⚠️ 必须使用 Read 工具仔细查看图片内容。**
+
+描述你看到的：
+- 谁在画面里？什么姿态？什么表情？什么构图？
+- 有没有不该出现的角色或物体？
+- 环境要素对不对？
+
+**第四步：对比判断**
+
+这张图跟你的 `director_prompts` 描述的画面一致吗？
+
+**重点检查：**
+- pose_contract 违反了吗？（姿态支撑关系是否保持）
+- gaze_contract 违反了吗？（视线方向对不对）
+- subject_constraints 违反了吗？（不该出现的出现了吗？该在的不在吗？）
+- shot_delta 违反了吗？（发生了不该变的变化吗？）
+
+**第五步：输出判断**
+
+创建 `director_judge_result.json`：
+
+```json
+{
+  "shot_id": 1,
+  "overall_action": "keep" | "regenerate",
+  "reason": "（如果不通过，简要说明原因）",
+  "adjustment_prompt": "（如果需要重新生成，写出生图调整建议）"
+}
+```
+
+### 5.5.3 审图检查清单
+
+| 检查维度 | 数据来源 | 审什么 |
+|---------|---------|--------|
+| 出镜控制 | `subject_constraints` | 该在的在不在？不该在的有没有出现？ |
+| 姿态 | `pose_contract` | 身体重心、支撑关系对不对？ |
+| 视线 | `gaze_contract` | 看的方向对不对？ |
+| 构图 | `motion_control` | 朝向、镜头角度对不对？ |
+| 场景连续性 | `scene_continuity` | 空间关系有没有漂移？道具状态对不对？ |
+| 变化边界 | `shot_delta` | 有没有发生不该变的变化？ |
+| 角色一致性 | `consistency_anchors` | 关键识别特征都在不在？ |
+| 叙事意图 | `director_plan` | 这张图有没有表达出戏核？ |
+| 情绪 | `emotion_arc` | 情绪基调对不对？ |
+| 衔接 | 前后 shot 状态 | 跟上一帧接得上吗？ |
+
+### 5.5.4 严禁的错误做法
+
+- ❌ 不看图片直接下结论
+- ❌ 只看一两句话的描述就判断
+- ❌ 不描述画面内容，直接说"没问题"或"有问题"
+- ❌ 使用 overall_action 以外的任何值
+
+### 5.5.5 正确的审片流程示例
+
+```
+1. Read 图片 → 描述："画面左侧是女孩蹲伏在崖壁根部，身体重心靠在右脚上..."
+2. 对比 director_prompts → 首帧 prompt 要求"身体重心落在右脚和墙根交界处" ✓
+3. 检查 pose_contract → "身体重心始终落在地面与右侧墙根交界处" ✓
+4. 判断：通过，输出 {"shot_id": 1, "overall_action": "keep"}
+```
+
+---
+
+## 步骤 5.6: 两阶段视频质量审查
 
 每段视频生成后，系统会自动执行两阶段质量审查：**阶段1 - 粗筛检测**自动标记风险片段，**阶段2 - LLM 视觉判断**由你（母模型）看图做最终裁定。
 
