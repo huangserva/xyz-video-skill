@@ -509,6 +509,7 @@ def main() -> None:
         assets_manifest_path = assets_dir / "assets.json"
         assets_payload = read_json(assets_manifest_path) if assets_manifest_path.exists() else {}
         pending_reviews = assets_payload.get("pending_reviews", []) if isinstance(assets_payload, dict) else []
+        blocked_reviews = assets_payload.get("blocked_reviews", []) if isinstance(assets_payload, dict) else []
         result["stages"]["assets"] = {
             "output_dir": str(assets_dir),
             "manifest": str(assets_manifest_path),
@@ -516,6 +517,14 @@ def main() -> None:
         if pending_reviews:
             result["stages"]["assets"]["pending_reviews"] = pending_reviews
             result["status"] = "pending_judgment"
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return
+        if blocked_reviews:
+            result["stages"]["assets"]["blocked_reviews"] = blocked_reviews
+            if any(str(item.get("status", "")).strip() == "needs_regeneration" for item in blocked_reviews if isinstance(item, dict)):
+                result["status"] = "needs_regeneration"
+            else:
+                result["status"] = "blocked"
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return
     elif assets_manifest_path is None and (output_root / "assets" / "assets.json").exists():

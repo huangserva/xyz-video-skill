@@ -10,12 +10,13 @@ from pathlib import Path
 from typing import Any
 
 from ad_assets import AssetGenerator
+from video_quality import trim_video_at, scan_video_quality, remove_video_segments
 
 
 def copy_trimmed(source_video: Path, output_video: Path, trim_to: float) -> None:
     output_video.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source_video, output_video)
-    AssetGenerator._trim_video_at(output_video, trim_to)
+    trim_video_at(output_video, trim_to)
 
 
 def collect_attempts(source_audit_dir: Path) -> list[tuple[int, Path]]:
@@ -49,7 +50,7 @@ def re_audit_shot(
     for attempt, source_video in collect_attempts(source_audit_dir):
         raw_copy = shot_dir / f"raw_attempt_{attempt}.mp4"
         shutil.copy2(source_video, raw_copy)
-        quality = AssetGenerator._scan_video_quality(
+        quality = scan_video_quality(
             source_video,
             audit_dir=shot_dir,
             attempt=attempt,
@@ -124,7 +125,7 @@ def re_audit_shot(
         if quality.get("cut_segments"):
             trimmed_copy = shot_dir / f"trimmed_attempt_{attempt}.mp4"
             copy_trimmed(source_video, trimmed_copy, duration := quality["duration"])
-            AssetGenerator._remove_video_segments(trimmed_copy, quality["cut_segments"])
+            remove_video_segments(trimmed_copy, quality["cut_segments"])
             entry["action"] = "segment_cut"
             entry["trimmed_video"] = str(trimmed_copy)
         elif quality["trim_to"] is not None:
