@@ -103,7 +103,6 @@
           "speed_baseline": "1.0x",
           "narration": "画外旁白（叙事类填写，纯动作留空）",
           "estimated_duration": 8,
-          "reference_strategy": "anchor_keyframes_end",
           "chain_from_previous": false,
           "shot_type": "visible_subject",
           "continuity_mode": "strict",
@@ -133,7 +132,7 @@
             "continuity_subjects": ["character_id"],
             "forbidden_visible_subjects": [],
             "semantic_rules": ["如果威胁主体暂时不入镜，就只表现角色反应，不直接把威胁画出来。"],
-            "pose_contract": ["当同一角色在首帧、关键帧、尾帧之间必须保持同一身体支撑状态时，用正向视觉语言写出固定姿态合同。"],
+            "pose_contract": ["当同一角色在多个参考阶段之间必须保持同一身体支撑状态时，用正向视觉语言写出固定姿态合同。"],
             "gaze_contract": {
               "character_id": {
                 "primary_target": "target_character",
@@ -191,28 +190,22 @@
 ### 2. end_frame_description
 - 每个 shot 都必须有，包括最后一个
 - 描述动作完成后的故事状态和画面状态
-- 首帧→尾帧运动路径必须单向可插值
+- 整个 shot 的动作推进必须单向、物理合理
 
 ### 3. continuity_mode（你来判断）
 - `"strict"`：关键镜头（情绪转折、状态大变化、关键落点）
 - `"scene_end"`：普通镜头（默认）
 - `"free"`：氛围空镜
 
-### 3.2. reference_strategy（必须先判断，再输出）
-- `reference_strategy` 现在是可审核的分析字段，不是视频参考协议主入口
-- 如果你能直接明确参考素材用途，优先写 `video_references`
-- `reference_strategy` 可以保留，用于让策略判断结果可见
-- 允许值：
-  - `single_anchor`
-  - `anchor_with_end`
-  - `anchor_with_keyframes`
-  - `anchor_keyframes_end`
+### 3.2. video_references（必须先判断用途，再输出）
+- `video_references` 是视频参考协议主入口
 - 判断顺序：
   1. 看动作复杂度
   2. 看状态变化幅度
   3. 看起止姿态约束强度
   4. 看与前后镜头的衔接依赖
 - 然后再把决策优先落成 `video_references`，再补 `continuity_mode`、`keyframes`、`chain_from_previous`
+- `reference_strategy` 如果要写，只能作为兼容审计字段，不是主脑
 
 ### 3.5. shot_type（生成策略类型，必须判断）
 - 每个 shot 必须标一个 `shot_type`
@@ -230,7 +223,7 @@
 
 ### 4. chain_from_previous（默认 false）
 - 仅当相邻 shot 角色相同、景别相近、场景连续时设为 true
-- 如果某个 shot 设置了 `chain_from_previous: true`，前一个 shot 必须能提供稳定结束状态；通常前一个 shot 应为 `anchor_with_end` 或 `anchor_keyframes_end`
+- 如果某个 shot 设置了 `chain_from_previous: true`，前一个 shot 必须能提供稳定结束状态
 
 ### 5. keyframes（可选）
 - 不要先因为想写 `keyframes` 才倒推策略
@@ -238,7 +231,6 @@
 - 第一个节点属于 `scene_prompt`
 - 最后一个节点属于 `end_frame_description`
 - 只有中间节点才写成 `keyframes`
-- 只有当 `reference_strategy` 是 `anchor_with_keyframes` 或 `anchor_keyframes_end` 时，才应该写 `keyframes`
 - 每项格式：`{"timestamp": 秒数, "description": "中间状态描述"}`
 - 只写姿态、位置、动作、场景，不写外貌
 - `keyframes` 是兼容字段，执行层会把它映射为 `video_references[].usage = "reference_stage"`

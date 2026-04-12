@@ -60,7 +60,6 @@
           "speed_baseline": "1.0x",
           "narration": "画外旁白（叙事类内容填写，纯动作/氛围类留空）",
           "estimated_duration": 8,
-          "reference_strategy": "anchor_keyframes_end",
           "chain_from_previous": false,
           "shot_type": "visible_subject",
           "continuity_mode": "strict",
@@ -90,7 +89,7 @@
             "continuity_subjects": ["character_id"],
             "forbidden_visible_subjects": [],
             "semantic_rules": ["如果这个镜头只拍角色反应，就不要把画外威胁直接画进来。"],
-            "pose_contract": ["当同一角色在首帧、关键帧、尾帧之间必须保持同一身体支撑状态时，用正向视觉语言写出固定姿态合同。"],
+            "pose_contract": ["当同一角色在多个参考阶段之间必须保持同一身体支撑状态时，用正向视觉语言写出固定姿态合同。"],
             "gaze_contract": {
               "character_id": {
                 "primary_target": "target_character",
@@ -144,10 +143,10 @@
 - **每个 shot 都必须有 end_frame_description，包括最后一个**
 - 描述动作完成后的故事状态和画面状态
 - 同样遵守单一真相源（不写外貌）
-- 首帧→尾帧的运动路径必须单向可插值（不能方向折返）
+- 整个 shot 的动作推进必须单向、物理合理（不能方向折返）
 
 ### 4. action_prompt（运动过程）
-- 只描述从首帧到尾帧的动作变化
+- 只描述从起始画面到目标状态的动作变化
 - 不重复外貌、服装、场景描述
 - 动作必须在 estimated_duration 内物理可完成
 
@@ -156,30 +155,23 @@
 - **`"scene_end"`**（默认）：普通叙事推进镜头
 - **`"free"`**：纯氛围空镜、粒子/光影渲染、无角色过场
 
-### 5.2. reference_strategy（先判断，再产出）
-- `reference_strategy` 现在是可审核的分析字段，不是视频参考协议主入口
-- 如果你已经能明确每张参考图的用途，优先直接写 `video_references`
-- `reference_strategy` 可以保留，方便复盘和审核
-- 允许值：
-  - `single_anchor`
-  - `anchor_with_end`
-  - `anchor_with_keyframes`
-  - `anchor_keyframes_end`
+### 5.2. video_references（先判断用途，再产出）
+- `video_references` 是视频参考协议主入口
 - 先按这 4 个维度判断：
   - 动作复杂度
   - 状态变化幅度
   - 起止姿态约束强度
   - 与前后镜头的衔接依赖
 - 然后再优先决定 `video_references`，再补 `continuity_mode`、`keyframes`、`chain_from_previous`
+- `reference_strategy` 如果要写，只能作为兼容审计字段，不是主脑
 
 ### 6. chain_from_previous（默认 false）
 - 默认每个 shot 独立生成首帧
 - 仅当相邻 shot 满足全部条件时设为 true：角色完全相同、景别相近、场景连续、前一 shot 尾帧适合作为本 shot 起点
 - 跨场景、闪回、时间跳跃、反打/视角大跳时必须 false
-- 如果本 shot 为 `chain_from_previous: true`，前一 shot 应具备稳定可复用的结束状态，通常不应是 `single_anchor`
+- 如果本 shot 为 `chain_from_previous: true`，前一 shot 应具备稳定可复用的结束状态
 
 ### 7. keyframes（可选）
-- 仅当 `reference_strategy` 为 `anchor_with_keyframes` 或 `anchor_keyframes_end` 时标注
 - 格式：`{"timestamp": 秒数, "description": "中间状态描述"}`
 - `timestamp` 必须落在镜头时长内，按时间递增
 - description 遵守单一真相源：不写外貌和服装

@@ -460,7 +460,6 @@ python3 ad_assets.py --mode character_refs --framework framework.json --output_d
                     "tts_text": "",
                     "subtitle": "",
                     "estimated_duration": 8,
-                    "reference_strategy": "anchor_with_end",
                     "shot_type": "visible_subject",
                     "chain_from_previous": false,
                     "continuity_mode": "scene_end",
@@ -476,7 +475,7 @@ python3 ad_assets.py --mode character_refs --framework framework.json --output_d
                         "continuity_subjects": ["character_id_1"],
                         "forbidden_visible_subjects": [],
                         "semantic_rules": ["保持本镜头内的动作与主体关系连续。"],
-                        "pose_contract": ["如果该角色在首帧、关键帧、尾帧之间必须保持同一承重姿态，就在这里写固定身体支撑关系。"],
+                        "pose_contract": ["如果该角色在多个参考阶段之间必须保持同一承重姿态，就在这里写固定身体支撑关系。"],
                         "gaze_contract": {
                             "character_id_1": {
                                 "primary_target": "character_id_2",
@@ -555,7 +554,7 @@ python3 ad_assets.py --mode character_refs --framework framework.json --output_d
 - `keyframes` = `nodes[1:-1]`
 - `action_prompt` = 各节点之间的过渡过程
 - `continuity_mode` = 最终落点约束强度
-- 建议每个 shot 显式产出 `reference_strategy`，作为“语义决策层”的可见结果
+- 建议每个 shot 显式产出 `video_references`，把“语义决策层”真正落到用途协议
 - 如果镜头内部存在明确阶段推进，建议显式产出 `time_beats`
 - 连续场景应优先声明 `scene_continuity`
 - 人物支撑姿态不能漂移的镜头应写 `subject_constraints.pose_contract`
@@ -662,7 +661,7 @@ python3 ad_assets.py --mode character_refs --framework framework.json --output_d
 **硬性约束：**
 - **每个镜头只做一个动作** — 一个镜头 = 一个清晰的视觉事件。如果你想写"A攻击B，B反击，然后A找到破绽刺穿B"，这必须拆成3个镜头。
 - **每个镜头 5-12 秒** — 但 `estimated_duration` 不应主要按动作复杂度拍脑袋决定，而应按**导演节奏**决定。Seedance API 支持 [5, 12] 区间任意整数。
-- **首帧到尾帧的动作路径必须物理合理** — 不能出现角色瞬移、位置互换、违反惯性的运动
+- **动作路径必须物理合理** — 不能出现角色瞬移、位置互换、违反惯性的运动
 - 总镜头数 ≈ total_duration ÷ 平均镜头时长（通常 7-10 秒/镜头）
 
 **导演版时长判断顺序：**
@@ -734,7 +733,7 @@ python3 ad_assets.py --mode character_refs --framework framework.json --output_d
 | `action_prompt` | 阶段过渡 | 阶段1如何到阶段2，阶段2如何到阶段3 |
 | `end_frame_description` | 最后一个阶段 | 动作完成后的明确落点 |
 
-三个字段构成一条**因果链**。代码会将完整因果链交给 LLM 提取首帧/尾帧生图 prompt，使首尾帧天然带有故事方向，Seedance I2V 能顺着这个方向做运动插值。
+三个字段构成一条**因果链**。代码会将完整因果链交给 LLM 提取起始画面 / 目标状态 / 动作描述，使参考素材和视频 prompt 都天然带有故事方向。
 
 **示例 — 递伞场景：**
 - ❌ "女人把伞递向书生"（纯动作，无故事上下文，无起始状态）
@@ -785,18 +784,25 @@ python3 ad_assets.py --mode character_refs --framework framework.json --output_d
 - 描述本镜头动作完成后的**故事状态和画面状态**
 - **同样遵守单一真相源**：只写姿态/场景，不写角色外貌（代码自动注入）
 - 最后一个 shot 的 end_frame_description 描述最终定格画面
-- **首帧→尾帧的运动路径必须单向可插值**：不能方向矛盾、不能景别跳变、位移量必须在 estimated_duration 内物理可完成
+- **同一个 shot 内的动作推进必须单向、物理合理**：不能方向矛盾、不能景别跳变、位移量必须在 estimated_duration 内物理可完成
 
-### 4.6.1 首帧→尾帧单向运动法则（Seedance 物理限制）
+### 4.6.1 单向运动法则（用途驱动协议下的物理约束）
 
-**这是最容易犯错的规则。** Seedance 在首帧和尾帧之间做运动插值，如果两端的视觉状态存在矛盾，模型会被迫在有限时长内强行对齐，产生不自然的"一刷"切换或角色瞬间转身。
+**这是最容易犯错的规则。** 现在的执行层虽然不再把视频主脑理解成“旧的时间点硬插值协议”，但模型仍然会同时参考：
 
-**核心法则：一个 shot 内只能有一个运动方向。**
+- 起始画面
+- 中间阶段参考（如果存在）
+- 目标状态参考（如果存在）
+- 动作描述与时间节拍
+
+如果这些输入在动作方向上互相矛盾，模型一样会被迫在有限时长内强行对齐，产生不自然的一刷、瞬移或突兀转向。
+
+**核心法则：一个 shot 内只能有一个主运动方向。**
 
 | 维度 | 允许 | 禁止 |
 |------|------|------|
-| 朝向 | 首帧正面 → 尾帧正面（没转向） | 首帧正面 → 动作中转身 → 尾帧又正面 |
-| | 首帧正面 → 尾帧背面（一次转身） | 首帧背面 → 尾帧正面（除非这就是唯一动作） |
+| 朝向 | 正面保持正面 | 正面 → 背面 → 又正面 |
+| 朝向 | 正面 → 背面（一次明确转向） | 背面 → 正面 → 又背面 |
 | 位移 | 从 A 走到 B（单向） | 从 A 走到 B 再走回 A |
 | 景别 | 中景推到近景（单向） | 近景→远景→近景 |
 | 姿态 | 站立→坐下（单向） | 站→坐→站 |
@@ -804,16 +810,24 @@ python3 ad_assets.py --mode character_refs --framework framework.json --output_d
 **常见错误场景：**
 
 ❌ 错误："角色走向亭子（背影），到达后转身面对镜头微笑"
-- 首帧：正面 → 动作：转身走（背面）→ 尾帧：又正面 = 方向矛盾
-- Seedance 会在 5-8 秒内强行完成 正面→背面→正面，产生生硬的"一刷"
+- 动作本体里包含了背向离开和重新正面面对镜头两种相反方向
+- 即使只给起始画面和目标状态，或者再加中间参考，模型都会被迫在一个 shot 里完成折返
 
 ✅ 正确拆法：
-- Shot A：角色转身走向亭子（首帧正面 → 尾帧背影到达亭子）
-- Shot B：角色在亭子里转身面对镜头（首帧背影 → 尾帧正面微笑）
+- Shot A：角色转身走向亭子（起始画面为正面，结果状态为到达亭子时的背影）
+- Shot B：角色在亭子里转身面对镜头（起始画面承接背影，结果状态才是正面微笑）
 
-**自检方法：** 写完每个 shot 后，想象用一条直线连接首帧状态和尾帧状态。如果这条线需要"折返"（方向反转），就必须拆成两个 shot。
+**自检方法：** 写完每个 shot 后，不要只问“有没有首尾画面”，而要问：
 
-**特别注意尾帧约束 shot：** 当 `continuity_mode` 为 `"strict"` 或该 shot 是 scene 末尾时，代码会传尾帧图给 Seedance 强约束终点画面。如果这个 shot 的首帧→尾帧存在方向矛盾，Seedance 会被强制对齐到矛盾的终点，问题最严重。其他 shot 虽然不传尾帧图，但 action_prompt 本身如果描述了往返动作，Seedance 也会产生不自然的运动。
+- `scene_prompt`
+- `time_beats`
+- `keyframes`（如果有）
+- `end_frame_description`
+- `video_references`
+
+它们共同描述的动作路径是否需要“折返”。如果需要折返，就必须拆成两个 shot。
+
+**特别注意目标状态参考 shot：** 当 `continuity_mode` 为 `"strict"` 或该 shot 是 scene 末尾时，执行层通常会为这个镜头准备 `reference_target_state`。如果动作本身存在方向矛盾，模型会被强行拉向错误落点，问题会更严重。
 
 ### 4.6.2 chain_from_previous（链式衔接，默认 false）
 
@@ -837,22 +851,22 @@ python3 ad_assets.py --mode character_refs --framework framework.json --output_d
 3. **时间跳跃导致光线质变** — 如雨天→雨停暖光
 4. **反打/视角大跳** — 角度差异太大无法链式
 
-**首尾帧生成策略（由 `continuity_mode` 控制）：**
+**目标状态参考策略（由 `continuity_mode` 控制）：**
 
 每个 shot 必须标注 `continuity_mode`，但这个字段应当是语义决策的结果，不是随手填写。代码根据它决定是否生成尾帧图。
 
 | 模式 | 含义 | 代码行为 |
 |------|------|---------|
-| `"strict"` | 关键镜头，必须精确落到目标画面 | 生成尾帧图，强约束终点 |
-| `"scene_end"` | 普通镜头（默认） | 仅当该 shot 是 scene 最后一个时生成尾帧图 |
-| `"free"` | 氛围/空镜/过场 | 不生成尾帧图，Seedance 自由运动 |
+| `"strict"` | 关键镜头，必须明确结果落点 | 生成目标状态参考图，强约束收束方向 |
+| `"scene_end"` | 普通镜头（默认） | 仅当该 shot 是 scene 最后一个时生成目标状态参考图 |
+| `"free"` | 氛围/空镜/过场 | 不生成目标状态参考图，Seedance 自由运动 |
 
-**你应该标 `"strict"` 的情况（必须有尾帧图锚定终点）：**
+**你应该标 `"strict"` 的情况（必须有目标状态参考图锚定落点）：**
 1. **情绪转折点** — 角色表情/情感状态发生关键变化的镜头（如从平静到震惊、从犹豫到坚定）
 2. **角色状态大变化** — 姿态/位置/持有物品发生重要改变（如拿起关键道具、倒下、起身）
 3. **关键动作落点** — 叙事上必须精确到达某个视觉状态的镜头（如递伞完成、门被推开、角色相遇）
 4. **scene 最后一个 shot** — 段落收口，确保命中目标画面（这种情况 `"scene_end"` 也会生成，但如果你认为这个收口特别重要，用 `"strict"` 更明确）
-5. **下一个 shot 是 `chain_from_previous: true`** — 如果下一个 shot 要从本 shot 视频提取尾帧作为首帧，本 shot 的终点状态就必须准确
+5. **下一个 shot 是 `chain_from_previous: true`** — 如果下一个 shot 要从本 shot 视频提取尾帧作为首帧，本 shot 的结果状态就必须准确
 
 **你应该标 `"scene_end"`（默认）的情况：**
 - 普通叙事推进，动作方向明确，不需要精确锚定终点
@@ -866,13 +880,13 @@ python3 ad_assets.py --mode character_refs --framework framework.json --output_d
 **典型 scene 内标注示例（3 个 shot）：**
 - Shot 1（角色抬头看向门口）：`"continuity_mode": "scene_end"` — 普通过渡
 - Shot 2（角色快步走向门口，到达门前）：`"continuity_mode": "strict"` — 关键位移落点，下一 shot chain 依赖本帧
-- Shot 3（角色推门出去，光线涌入）：`"continuity_mode": "scene_end"` — scene 末尾，默认也会生成尾帧
+- Shot 3（角色推门出去，光线涌入）：`"continuity_mode": "scene_end"` — scene 末尾，默认也会生成目标状态参考
 
 ### 4.6.3 keyframes（中间关键帧，可选）
 
 先说新的主原则：
 
-- Seedance 2.0 的多参考图主脑不是“首帧 / 尾帧 / 中间硬关键帧插值”
+- Seedance 2.0 的多参考图主脑不是“旧的时间点插值协议”
 - 执行层现在会把所有视频参考素材统一归一成 `video_references`
 - 每张参考图都必须先定义**用途**，再在视频 prompt 里用 `@图片N` 显式调用
 - `keyframes` 仍保留，但它现在是“中间阶段参考”的兼容写法，不再代表模型必须命中的时间点
@@ -953,7 +967,7 @@ python3 ad_assets.py --mode character_refs --framework framework.json --output_d
 **何时标注 `keyframes`：**
 - 镜头内有明确的阶段性姿态变化（如：蹲下 → 起身 → 转身）
 - 需要精确控制中间某个时刻的画面状态
-- 动作路径复杂，首尾帧不足以约束
+- 动作路径复杂，起始画面与目标状态不足以约束
 - 情绪或关系变化需要经过明确的多个状态节点
 
 **何时应该拆 shot，而不是继续加 `keyframes`：**
@@ -1030,21 +1044,12 @@ python3 ad_assets.py --mode character_refs --framework framework.json --output_d
 6. 判断是否需要 `time_beats`
 7. 最后输出 `shot_type`、`continuity_mode`、`keyframes`
 
-### 4.6.3.3 `reference_strategy`（建议显式产出）
+### 4.6.3.3 `reference_strategy`（兼容审计字段，不推荐作为主产物）
 
-为避免“明明做了语义判断，但 storyboard 里看不出来”，建议每个 shot 额外显式写出：
+如果你确实需要把“语义判断过程”额外暴露出来，可以保留一个 `reference_strategy` 字段做复盘或审计。
 
-```json
-"reference_strategy": "single_anchor"
-```
+但从现在开始，它**不是推荐默认产出的主字段**，更不是视频参考协议入口。
 
-允许值：
-- `single_anchor`：仅首帧
-- `anchor_with_end`：首帧 + 尾帧
-- `anchor_with_keyframes`：首帧 + 中间 keyframes
-- `anchor_keyframes_end`：首帧 + 中间 keyframes + 尾帧
-
-这个字段当前主要用于让母模型的策略判断结果可见、可审核。
 执行层真正优先读取的是：
 - `video_references`
 - `shot_type`
@@ -1052,7 +1057,7 @@ python3 ad_assets.py --mode character_refs --framework framework.json --output_d
 - `keyframes`
 - `chain_from_previous`
 
-因此从现在开始，写 storyboard 时应优先先产出 `video_references`，再决定是否额外显式写 `reference_strategy`。
+因此从现在开始，写 storyboard 时应优先先产出 `video_references`，只有在你明确需要保留“策略判断痕迹”时，才额外显式写 `reference_strategy`。
 
 **示例 — 适合链式：**
 - Shot 3: 两人对话中景 → Shot 4: 同一场景两人继续对话，镜头略推近
@@ -1071,7 +1076,7 @@ python3 ad_assets.py --mode character_refs --framework framework.json --output_d
 - 镜头内存在明显的爆发动作，而不是平缓位移
 - 至少两个主体之间存在高强度交互或对抗
 - 结果姿态与起始姿态差异很大
-- 如果只给首帧和尾帧，模型大概率会用平滑补间糊过去
+- 如果只给起始画面和目标状态，模型大概率会用平滑补间糊过去
 
 **一旦属于强动作 shot，必须同时满足以下规则：**
 1. `continuity_mode` 不能写 `"free"`，默认写 `"strict"`
@@ -1110,7 +1115,7 @@ python3 ad_assets.py --mode character_refs --framework framework.json --output_d
 - 镜头关系：镜头是稳跟、被动作带动，还是保持观察位
 
 **判断写得够不够的自检标准：**
-- 如果把 `action_prompt` 拿掉，只剩首尾帧，模型会不会变成慢吞吞的补间？
+- 如果把 `action_prompt` 拿掉，只剩起始画面和目标状态，模型会不会变成慢吞吞的补间？
 - 如果答案是“会”，那这个强动作 shot 写得还不够。
 
 **示例 — 武松打虎 shot 3：**
@@ -1421,7 +1426,7 @@ scene_prompt（起始状态）→ action_prompt（运动过程）→ end_frame_d
 
 一次性生成的目的是让你拥有全局视角，确保：
 - 跨镜头的角色行为一致性（同一角色不能在不同镜头表现出矛盾的性格）
-- 首尾帧衔接的物理连贯性（Shot N 的 end_frame 必须和 Shot N+1 的 scene_prompt 匹配）
+- 相邻镜头衔接的物理连贯性（Shot N 的 end_frame 必须和 Shot N+1 的 scene_prompt 匹配）
 - 情绪弧线的自然过渡（不能突然跳跃）
 - consistency_anchors 中 must_show 特征在相邻镜头间保持一致
 
@@ -1558,18 +1563,18 @@ python3 ad_compose.py \
 4. 将 scene 层的 `lighting`、`weather`、`props`、`environment_description` 注入到同场景所有 shot 的 prompt 中（**视觉基底共享**）
 5. 用 ContentFilter 过滤 `scene_prompt` 中残留的外貌描述（安全网）
 6. **全局 prompt 提取**：将完整 narrative + 所有 shot 的 narrative_segment / scene_prompt / action_prompt / end_frame_description 一次性交给 LLM，为每个 shot 提取：
-   - `first_frame_prompt` — 带前后文衔接的首帧视觉描述
-   - `last_frame_prompt` — 带前后文衔接的尾帧视觉描述
+   - `first_frame_prompt` — 带前后文衔接的起始画面描述
+   - `last_frame_prompt` — 带前后文衔接的目标状态描述
    - `video_action_prompt` — 带故事方向的动作描述（给 Seedance 用）
    LLM 看到完整故事线 + 所有镜头上下文，提取出的 prompt 天然连贯。
 7. 按 `characters_in_shot` 逐个传角色参考图给图片模型
-8. 每个 shot：用 first_frame_prompt 生成首帧图 → 用 last_frame_prompt 生成尾帧图 → 归一化生成 `video_references`
-9. Seedance I2V 不再按“首帧+尾帧+keyframes”硬编码组织，而是按用途驱动参考素材组织，并在 prompt 里显式调用：
+8. 每个 shot：用 `first_frame_prompt` 生成起始画面 → 在需要时用 `last_frame_prompt` 生成目标状态参考 → 归一化生成 `video_references`
+9. Seedance I2V 不再按旧的时间点硬编码组织，而是按用途驱动参考素材组织，并在 prompt 里显式调用：
    - `@图片1 作为首帧`
    - `@图片2 参考角色`
    - `@图片3 参考构图`
    - `@图片4 参考目标状态`
-10. 如果 shot 标记了 `chain_from_previous: true`，从前一 shot 视频提取实际尾帧作为首帧（否则独立生成）
+10. 如果 shot 标记了 `chain_from_previous: true`，从前一 shot 视频提取实际尾帧作为当前起始画面（否则独立生成）
 11. 尾帧图根据 `continuity_mode` 决定是否生成：`"strict"` 强制生成，`"scene_end"` 仅 scene 末尾生成，`"free"` 跳过
 12. **视频质量自动检测**：每段视频生成后自动执行三重检测（详见下方），不合格则自动重试或裁剪
 13. 生成 BGM
@@ -1605,7 +1610,7 @@ python3 ad_compose.py \
 读取 `review_context.json` 中的 `director_entry`（来自 `director_prompts.json`）：
 - `first_frame.prompt`：首帧你想要的画面
 - `last_frame.prompt`：尾帧你想要的画面
-- `video_action`：从首帧到尾帧的动作过程
+- `video_action`：从起始画面到目标状态的动作过程
 
 **第二步：理解约束条件**
 
@@ -1830,7 +1835,7 @@ API 密钥配置在 `config/api_keys.yaml` 或通过环境变量：
 | 问题 | 原因 | 解决 |
 |------|------|------|
 | 角色在不同镜头变样 | scene_prompt 里写了外貌导致漂移 | 遵守单一真相源：scene_prompt 禁止写外貌，外貌由代码从 characters 自动注入 |
-| 视频里角色倒退/瞬移 | 首帧到尾帧的动作路径不合理 | 检查 end_frame 和下一帧 scene_prompt 是否物理连贯 |
+| 视频里角色倒退/瞬移 | 动作路径不合理 | 检查 end_frame 和下一帧 scene_prompt 是否物理连贯 |
 | 动作做不完 | 一个镜头塞了太多动作 | 拆成多个镜头，每个只做一个动作 |
 | 旁白读不完 | narration 文字太长 | ≤20字/10秒镜头 |
 | 视频画面随机漫游 | end_frame_description 为空 | 每个 shot 必须填写 end_frame_description |
